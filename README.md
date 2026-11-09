@@ -41,7 +41,7 @@ npm run dev
 
 项目已经内置一把 Steam Web API Key，玩家档案默认走官方接口，无需在页面上填写任何 Key。页面不再提供自定义 Key 入口。
 
-- Key 使用 **AES-256-GCM** 加密后保存在 `.steam-key.enc`，解密密钥单独存放在 `.steam-key.secret`。(注意:开源版本不带API请自行用AES-256-GCM加密后存放在steam-key.enc，解密密钥放在steam-key.secret)
+- Key 使用 **AES-256-GCM** 加密后保存在 `.steam-key.enc`，解密密钥单独存放在 `.steam-key.secret`。(注意:开源版本不带API请自行用AES-256-GCM加密后存放在.steam-key.enc，解密密钥放在.steam-key.secret 如何获取SteamAPI:https://steamcommunity.com/dev/apikey 需启用Steam手机令牌才能获取)
 - 两个文件都不会被 Git 跟踪（见 `.gitignore`），也不会被任何接口返回或写入日志；浏览器只收到 `hasServerKey: true/false`。
 - 更换 Key：`node set-key.mjs 新的32位Key`，然后重启服务。
 - 彻底撤销：删除 `.steam-key.enc` 与 `.steam-key.secret`，重启后自动退回公开档案模式。
