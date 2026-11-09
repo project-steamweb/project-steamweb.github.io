@@ -81,6 +81,7 @@ steam-web/
 ├─ set-key.mjs             # 加密写入 / 更换 Steam Web API Key
 ├─ .steam-key.enc          # 加密后的 Key（不入库）
 ├─ .steam-key.secret       # 解密密钥（不入库，勿外传）
+├─ index.html              # 仓库首页 / GitHub Pages 落地页（仅说明，不含功能）
 ├─ public/
 │  ├─ index.html           # 页面骨架、SVG 图标
 │  ├─ styles.css           # 设计系统与响应式布局

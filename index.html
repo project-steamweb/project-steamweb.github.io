@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Steam Atlas · 蒸汽图鉴</title>
+<meta name="description" content="Steam 游戏资料、全球 16 区价格与玩家档案查询工具。项目由 AI 编写。">
+<meta name="theme-color" content="#070a0f">
+<style>
+  :root {
+    --bg: #070a0f;
+    --panel: rgba(13, 19, 27, 0.72);
+    --line: rgba(235, 245, 255, 0.075);
+    --line-strong: rgba(235, 245, 255, 0.14);
+    --text: #edf3f8;
+    --text-soft: #c2ced9;
+    --muted: #8493a4;
+    --muted-2: #5e6b7a;
+    --accent: #6ee7c8;
+    --accent-soft: rgba(110, 231, 200, 0.11);
+    --blue: #82b6ff;
+    --orange: #ffb46b;
+    --red: #ff7b87;
+    --display: "Bahnschrift SemiCondensed", "Bahnschrift", "Segoe UI Variable Display", "Segoe UI", "Noto Sans SC", "Microsoft YaHei UI", sans-serif;
+    --body: "Segoe UI Variable Text", "Segoe UI", "Noto Sans SC", "Microsoft YaHei UI", sans-serif;
+    --mono: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    padding: clamp(24px, 5vw, 72px) clamp(18px, 5vw, 56px);
+    background:
+      radial-gradient(900px 520px at 12% -8%, rgba(110, 231, 200, 0.10), transparent 62%),
+      radial-gradient(760px 480px at 92% 4%, rgba(130, 182, 255, 0.09), transparent 60%),
+      var(--bg);
+    color: var(--text);
+    font-family: var(--body);
+    line-height: 1.65;
+    display: flex;
+    justify-content: center;
+  }
+  .wrap { width: 100%; max-width: 1080px; }
+
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 11px;
+    border: 1px solid rgba(110, 231, 200, 0.28);
+    border-radius: 99px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+  .eyebrow .dot {
+    width: 5px; height: 5px; border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 8px rgba(110, 231, 200, 0.8);
+  }
+
+  h1 {
+    margin: 20px 0 0;
+    font-family: var(--display);
+    font-size: clamp(40px, 7vw, 76px);
+    font-weight: 520;
+    line-height: 1.02;
+    letter-spacing: -0.04em;
+  }
+  h1 span { color: var(--accent); }
+  .lede {
+    margin: 18px 0 0;
+    max-width: 62ch;
+    color: var(--text-soft);
+    font-size: clamp(14px, 1.6vw, 17px);
+  }
+
+  .ai-note {
+    display: flex;
+    gap: 12px;
+    margin-top: 26px;
+    padding: 15px 17px;
+    border: 1px solid rgba(255, 180, 107, 0.24);
+    border-radius: 14px;
+    background: rgba(255, 180, 107, 0.07);
+  }
+  .ai-note .mark {
+    flex: none;
+    width: 26px; height: 26px;
+    display: grid; place-items: center;
+    border-radius: 7px;
+    background: rgba(255, 180, 107, 0.14);
+    color: var(--orange);
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .ai-note b { color: #ffd0a1; font-size: 13px; font-weight: 600; }
+  .ai-note p { margin: 3px 0 0; color: var(--muted); font-size: 12.5px; }
+
+  .grid {
+    margin-top: 34px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(238px, 1fr));
+    gap: 12px;
+  }
+  .card {
+    padding: 16px 17px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: var(--panel);
+  }
+  .card .k {
+    color: var(--muted-2);
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+  .card h2 {
+    margin: 7px 0 0;
+    font-family: var(--display);
+    font-size: 18px;
+    font-weight: 520;
+    letter-spacing: -0.01em;
+  }
+  .card p { margin: 6px 0 0; color: var(--muted); font-size: 12.5px; }
+
+  .deploy {
+    margin-top: 16px;
+    padding: 18px 19px;
+    border: 1px solid var(--line-strong);
+    border-radius: 14px;
+    background: rgba(13, 19, 27, 0.9);
+  }
+  .deploy h2 {
+    margin: 0;
+    font-family: var(--display);
+    font-size: 20px;
+    font-weight: 520;
+  }
+  .deploy p { margin: 8px 0 0; color: var(--muted); font-size: 13px; }
+  .deploy ul { margin: 10px 0 0; padding-left: 19px; color: var(--muted); font-size: 12.5px; }
+  .deploy li { margin-top: 4px; }
+  .deploy li b { color: var(--text-soft); font-weight: 600; }
+  code {
+    padding: 1px 5px;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--accent);
+    font-family: var(--mono);
+    font-size: 0.9em;
+  }
+  pre {
+    margin: 12px 0 0;
+    padding: 12px 14px;
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: rgba(4, 7, 11, 0.8);
+    color: var(--text-soft);
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.6;
+  }
+  pre .c { color: var(--muted-2); }
+
+  .actions { margin-top: 22px; display: flex; flex-wrap: wrap; gap: 10px; }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 11px 18px;
+    border: 1px solid var(--line-strong);
+    border-radius: 10px;
+    color: var(--text-soft);
+    font-size: 13px;
+    text-decoration: none;
+    transition: border-color 180ms ease, background 180ms ease, color 180ms ease;
+  }
+  .btn:hover { border-color: rgba(235, 245, 255, 0.3); background: rgba(255, 255, 255, 0.05); color: var(--text); }
+  .btn.primary {
+    border-color: rgba(110, 231, 200, 0.35);
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  .btn.primary:hover { background: rgba(110, 231, 200, 0.18); }
+
+  footer {
+    margin-top: 42px;
+    padding-top: 18px;
+    border-top: 1px solid var(--line);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 20px;
+    color: var(--muted-2);
+    font-family: var(--mono);
+    font-size: 10px;
+  }
+  footer a { color: var(--muted); text-decoration: none; }
+  footer a:hover { color: var(--accent); }
+
+  @media (max-width: 560px) {
+    body { padding: 26px 16px 40px; }
+    h1 { font-size: clamp(34px, 11vw, 46px); }
+    .card h2 { font-size: 16.5px; }
+  }
+</style>
+</head>
+<body>
+  <main class="wrap">
+    <span class="eyebrow"><span class="dot"></span>Steam Data Explorer</span>
+
+    <h1>Steam Atlas<br><span>蒸汽图鉴</span></h1>
+    <p class="lede">
+      查询 Steam 游戏资料、全球 16 个区服的本地定价，以及玩家的公开档案与隐私状态。
+      中文界面，深色响应式设计，零第三方依赖。
+    </p>
+
+    <div class="ai-note">
+      <span class="mark">AI</span>
+      <div>
+        <b>本项目由 AI 编写</b>
+        <p>
+          代码、页面、样式与文档均由 AI（DeepSeek 驱动的编码助手）根据需求生成并迭代完成，人工仅提出需求与反馈。
+          使用或二次开发前请自行 Review 代码。
+        </p>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <div class="k">Store</div>
+        <h2>游戏资料</h2>
+        <p>简介、截图、宣传片、成就、DLC、发售版本、配置要求、年龄分级与版权信息。</p>
+      </div>
+      <div class="card">
+        <div class="k">Pricing</div>
+        <h2>全球 16 区价格</h2>
+        <p>一次读取各区本地定价，按公开汇率估算人民币并横向排序，标注非本地货币计价。</p>
+      </div>
+      <div class="card">
+        <div class="k">Profile</div>
+        <h2>玩家档案</h2>
+        <p>支持 SteamID64、个性域名与主页链接，展示等级、徽章、游戏库、封禁与最近游玩。</p>
+      </div>
+      <div class="card">
+        <div class="k">Privacy</div>
+        <h2>隐私逐项标注</h2>
+        <p>游戏库、时长、地区、最近在线等逐项标明公开 / 仅好友 / 私密，不把限制伪装成无数据。</p>
+      </div>
+    </div>
+
+    <section class="deploy">
+      <h2>这个页面只是仓库首页</h2>
+      <p>
+        完整功能需要 Node.js 后端：Steam 商店与社区接口不返回 CORS 头，且 Web API Key 只能在服务端使用，
+        因此 <b>GitHub Pages 无法运行本站的 API 代理</b>。
+      </p>
+      <pre><span class="c"># 克隆后本地运行（需要 Node.js 20+）</span>
+git clone https://github.com/project-steamweb/project-steamweb.github.io.git
+cd project-steamweb.github.io
+node server.mjs
+<span class="c"># 然后访问 http://127.0.0.1:8787</span></pre>
+      <ul>
+        <li><b>本地运行</b>：最简单，仅自己使用。</li>
+        <li><b>Node 托管平台</b>：Render / Railway / Fly.io / VPS 运行 <code>node server.mjs</code>。</li>
+        <li><b>前后端分离</b>：后端部署到上述平台，前端静态托管到 Pages。</li>
+      </ul>
+    </section>
+
+    <div class="actions">
+      <a class="btn primary" href="https://github.com/project-steamweb/project-steamweb.github.io">查看源码仓库</a>
+      <a class="btn" href="https://github.com/project-steamweb/project-steamweb.github.io#readme">部署说明</a>
+    </div>
+
+    <footer>
+      <span>Steam Atlas · v1.0.9</span>
+      <span>非 Valve / Steam 官方产品</span>
+      <span>由 AI 编写</span>
+    </footer>
+  </main>
+</body>
+</html>
