@@ -86,6 +86,8 @@ function watchStoredKey() {
 const DEFAULT_PLAYER_TITLES = [
   { id: 'owner', steamId: '76561199473775554', label: 'Owner', color: 'crimson', priority: 100 },
 ];
+// The account the OpenID handshake claims by default (the site owner).
+const DEFAULT_OWNER_STEAM_ID = '76561199473775554';
 
 let playerTitles = new Map(DEFAULT_PLAYER_TITLES.map((item) => [item.steamId, item]));
 
@@ -1521,11 +1523,15 @@ async function getProfile(rawInput, key) {
    ========================================================= */
 const OPENID_NS = 'http://specs.openid.net/auth/2.0';
 const OPENID_ENDPOINT = `${COMMUNITY_ORIGIN}/openid/login`;
-// claimed_id / identity must stay empty for a generic "sign in with Steam":
-// a fixed value tells Steam that only that one account may log in, and Steam
-// answers with openid.mode=error for everybody else. With an empty claimed_id
-// Steam shows the account picker and returns the real identity in the reply.
-const OPENID_IDENTITY = '';
+// Steam validates the claimed_id / identity pair and rejects anything that is
+// not a real identity URL ("Invalid claimed_id or identity"). An empty value is
+// therefore not an option — the placeholder has to look like a SteamID profile.
+// The default is the site owner's account; set STEAM_OPENID_CLAIMED_ID to use a
+// different SteamID (or a generic placeholder Steam accepts for any account).
+const OPENID_CLAIMED_ID = (
+  process.env.STEAM_OPENID_CLAIMED_ID
+  || `https://steamcommunity.com/openid/id/${DEFAULT_OWNER_STEAM_ID}`
+).trim();
 const SESSION_COOKIE = 'steam_atlas_sid';
 const STATE_COOKIE = 'steam_atlas_state';
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7;
@@ -1565,8 +1571,8 @@ function buildOpenIdUrl(returnTo) {
   const params = new URLSearchParams({
     'openid.ns': OPENID_NS,
     'openid.mode': 'checkid_setup',
-    'openid.claimed_id': OPENID_IDENTITY,
-    'openid.identity': OPENID_IDENTITY,
+    'openid.claimed_id': OPENID_CLAIMED_ID,
+    'openid.identity': OPENID_CLAIMED_ID,
     'openid.return_to': returnTo,
   });
   return `${OPENID_ENDPOINT}?${params.toString()}`;
@@ -2244,6 +2250,7 @@ const server = http.createServer(async (req, res) => {
           const steamError = url.searchParams.get('openid.error') || '';
           const steamErrorText = url.searchParams.get('openid.error_description')
             || url.searchParams.get('openid.error_message') || '';
+          const looksLikeClaimIdProblem = /claimed_id|identity/i.test(steamError);
           // Steam 只接受真正的域名，IP 和 localhost 都不行
           const isIpLike = /^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host === 'localhost' || host === '::1';
           const looksLikeDomain = !isIpLike
@@ -2255,13 +2262,18 @@ const server = http.createServer(async (req, res) => {
           } else if (mode === 'cancel') {
             hints.push('这次登录在 Steam 上被取消或未通过授权');
           }
+          if (looksLikeClaimIdProblem) {
+            hints.push(`Steam 不接受当前请求里的 claimed_id（${OPENID_CLAIMED_ID}），它必须是合法的 Steam 身份地址`);
+          }
           if (!looksLikeDomain) {
             hints.push('Steam 不接受 IP 作为回调域名，请改用域名访问本站');
           }
           if (!isHttps) {
             hints.push('回调地址必须是 https，Steam 会拒绝 http 的回跳地址');
           }
-          hints.push(`请到 steamcommunity.com/dev/apikey 把「${host}」登记到这个 API Key 的 Website / Domain 字段`);
+          if (!looksLikeClaimIdProblem) {
+            hints.push(`请到 steamcommunity.com/dev/apikey 把「${host}」登记到这个 API Key 的 Website / Domain 字段`);
+          }
           if (!isHttps) {
             hints.push('如果浏览器里用的是 https 地址，请让反向代理转发 X-Forwarded-Proto: https，或设置 PUBLIC_ORIGIN=https://' + host);
           }
