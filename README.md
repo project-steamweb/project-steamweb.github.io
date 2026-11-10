@@ -68,6 +68,10 @@ node server.mjs
 > curl http://127.0.0.1:8787/api/auth/debug
 > ```
 >
+> 登录管理后台后，「**Steam 登录自检**」面板里也会直接列出要登记到 API Key 的域名、回调地址和 `PUBLIC_ORIGIN`。
+>
+> 如果 Steam 跳转回来时提示「没有完成 OpenID 握手」，说明它没有走完握手（回跳里没有 `openid.mode=id_res`）——绝大多数情况就是上面的域名没登记，提示里会写清楚该登记哪个域名。
+>
 > 反向代理部署时，服务端会读取 `x-forwarded-host` / `x-forwarded-proto` 推断对外地址，也可以直接指定：
 >
 > ```bash
@@ -157,6 +161,7 @@ ADMIN_PASSWORD=你的强密码
 | 运行状态 | 版本、运行时长、是否配置 API Key、区服数、缓存条目、登录会话数、Node 版本 |
 | 玩家称号 | 在线增删改称号（SteamID64、名称、颜色、优先级），保存后立即生效并持久化到 `data/titles.json` |
 | 修改登录密码 | 验证当前密码后设置新密码 |
+| Steam 登录自检 | 显示当前回调地址、需要登记到 API Key 的域名、`PUBLIC_ORIGIN` 覆盖情况 |
 
 安全设计：
 

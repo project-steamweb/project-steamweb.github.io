@@ -2201,11 +2201,17 @@ const server = http.createServer(async (req, res) => {
         if (url.searchParams.get('openid.mode') !== 'id_res') {
           // Steam 只有在「回调域名已登记在 API Key 里」时才会走完握手并回传 id_res，
           // 否则它会直接跳回一个错误页（没有 openid.mode 参数）。
-          const registered = /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(hostOf(publicOrigin(req)));
+          const origin = publicOrigin(req);
+          const host = hostOf(origin);
+          const callbackUrl = `${origin}/api/auth/callback`;
+          // Steam 只接受真正的域名，IP 和 localhost 都不行
+          const isIpLike = /^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host === 'localhost' || host === '::1';
+          const looksLikeDomain = !isIpLike
+            && /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i.test(host);
           fail(
-            registered
-              ? 'Steam 没有完成 OpenID 握手。请确认 Steam Web API Key 的 Website / Domain 里登记了本站域名。'
-              : 'Steam 没有完成 OpenID 握手。本站用的是 IP 或本机地址，Steam 要求回调域名必须登记在 API Key 的 Website / Domain 里，请改用域名访问或先登记该域名。',
+            looksLikeDomain
+              ? `Steam 没有完成 OpenID 握手：请到 steamcommunity.com/dev/apikey，把「${host}」登记到这个 API Key 的 Website / Domain 字段（回调地址 ${callbackUrl}），并用这个域名访问本站。`
+              : `Steam 没有完成 OpenID 握手：Steam 不接受 IP 作为回调域名。当前访问地址是 ${origin}，请改用域名访问本站，并把该域名登记到 API Key 的 Website / Domain 字段（回调地址 ${callbackUrl}）。`,
             'OPENID_INVALID',
           );
           return;

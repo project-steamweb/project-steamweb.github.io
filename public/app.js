@@ -167,10 +167,12 @@ function toast(message, type = 'success') {
   element.className = `toast${type === 'error' ? ' error' : ''}`;
   element.innerHTML = `${icon(type === 'error' ? 'alert' : 'check')}<span>${escapeHtml(message)}</span>`;
   toastRegion.append(element);
+  // 错误提示往往包含要照着做的操作，多留一会儿
+  const life = type === 'error' ? 11000 : 3800;
   setTimeout(() => {
     element.classList.add('out');
     setTimeout(() => element.remove(), 220);
-  }, 3800);
+  }, life);
 }
 
 async function copyText(value) {
@@ -1956,7 +1958,33 @@ function adminLoginPage(message = '') {
     </div>`;
 }
 
-function adminDashboard(stats, titles) {
+function adminAuthPanel(debug) {
+  if (!debug) return '';
+  const rows = [
+    ['回调地址', debug.callbackUrl],
+    ['主机名', debug.hostname],
+    ['API Key', debug.serverKeyConfigured ? '已配置' : '未配置'],
+    ['PUBLIC_ORIGIN', debug.publicOriginOverride || '（未设置）'],
+  ].map(([label, value]) => `
+    <div class="identity-row"><span>${escapeHtml(label)}</span><b>${escapeHtml(String(value))}</b></div>`).join('');
+
+  const isIp = /^\d{1,3}(\.\d{1,3}){3}$/.test(debug.hostname || '');
+  const status = !debug.serverKeyConfigured
+    ? ['red', '未配置 Steam Web API Key，登录无法进行']
+    : isIp
+      ? ['orange', '当前是 IP 地址，Steam 不接受 IP 作为回调域名，需要用域名访问']
+      : ['blue', `请确认 API Key 的 Website / Domain 里登记了「${debug.hostname}」`];
+
+  return `
+    <section class="panel admin-panel">
+      <div class="panel-title-row"><h2>Steam 登录自检</h2><span>AUTH CHECK</span></div>
+      <div class="admin-hint" style="margin-bottom:12px">Steam 只有在「回调域名已登记在 API Key 里」时才会完成 OpenID 握手。下面的域名需要登记到 <code>steamcommunity.com/dev/apikey</code> 的 Website / Domain 字段。</div>
+      <div class="identity-list">${rows}</div>
+      <div class="profile-note ${status[0] === 'red' ? 'warning' : ''}" style="margin-top:12px">${icon('info')}<span>${escapeHtml(status[1])}</span></div>
+    </section>`;
+}
+
+function adminDashboard(stats, titles, debug) {
   const rows = titles.map((title, index) => `
     <tr data-admin-title="${escapeHtml(title.steamId)}">
       <td><input type="text" name="steamId" value="${escapeHtml(title.steamId)}" inputmode="numeric" pattern="\\d{17}" required></td>
@@ -2019,6 +2047,8 @@ function adminDashboard(stats, titles) {
           <button class="button primary" type="submit">${icon('lock')}修改密码</button>
         </form>
       </section>
+
+      ${adminAuthPanel(debug)}
     </div>`;
 }
 
@@ -2035,12 +2065,13 @@ async function renderAdmin(token, signal) {
     return;
   }
   try {
-    const [stats, titlesData] = await Promise.all([
+    const [stats, titlesData, debug] = await Promise.all([
       api('/api/admin/stats', { signal }),
       api('/api/admin/titles', { signal }),
+      api('/api/auth/debug', { signal }).catch(() => null),
     ]);
     if (token !== state.renderToken) return;
-    setView(adminDashboard({ ...stats, username: session.username }, titlesData.titles || []));
+    setView(adminDashboard({ ...stats, username: session.username }, titlesData.titles || [], debug));
   } catch (error) {
     if (error.status === 401) {
       setView(adminLoginPage('登录已失效，请重新登录'));

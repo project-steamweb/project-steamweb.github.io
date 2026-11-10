@@ -2330,7 +2330,7 @@ dialog::backdrop { background: rgba(3, 6, 9, 0.74); backdrop-filter: blur(8px); 
   display: flex;
   align-items: flex-start;
   gap: 9px;
-  max-width: 360px;
+  max-width: 460px;
   padding: 11px 13px;
   border: 1px solid var(--line-strong);
   border-radius: 9px;
@@ -2338,10 +2338,11 @@ dialog::backdrop { background: rgba(3, 6, 9, 0.74); backdrop-filter: blur(8px); 
   box-shadow: 0 16px 50px rgba(0, 0, 0, 0.4);
   color: var(--text-soft);
   font-size: 10.5px;
-  line-height: 1.6;
+  line-height: 1.7;
   animation: toast-in 250ms var(--ease) both;
   pointer-events: auto;
 }
+.toast.error { border-color: rgba(255, 92, 114, 0.35); }
 .toast.out { animation: toast-out 200ms ease forwards; }
 .toast svg { width: 14px; height: 14px; color: var(--accent); flex: none; margin-top: 1px; }
 .toast.error svg { color: var(--red); }
