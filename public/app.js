@@ -1965,6 +1965,7 @@ function adminAuthPanel(debug) {
     ['主机名', debug.hostname],
     ['协议', debug.https ? 'https ✓' : 'http ✗（Steam 只接受 https）'],
     ['API Key', debug.serverKeyConfigured ? '已配置' : '未配置'],
+    ['当前 Key 指纹', debug.serverKeyFingerprint || '（未配置）'],
     ['PUBLIC_ORIGIN', debug.publicOriginOverride || '（未设置）'],
   ].map(([label, value]) => `
     <div class="identity-row"><span>${escapeHtml(label)}</span><b>${escapeHtml(String(value))}</b></div>`).join('');
@@ -1979,7 +1980,7 @@ function adminAuthPanel(debug) {
   return `
     <section class="panel admin-panel">
       <div class="panel-title-row"><h2>Steam 登录自检</h2><span>AUTH CHECK</span></div>
-      <div class="admin-hint" style="margin-bottom:12px">Steam 只有在「回调域名已登记在 API Key 里」且「回调地址是 https」时才会完成 OpenID 握手。</div>
+      <div class="admin-hint" style="margin-bottom:12px">Steam 只有在「回调域名已登记在 API Key 里」且「回调地址是 https」时才会完成 OpenID 握手。注意：登记域名的必须是服务器正在用的那一把 Key——Steam 会用登记了该域名的 Key 去签名回跳。</div>
       <div class="identity-list">${rows}</div>
       <div class="profile-note ${status[0] === 'red' ? 'warning' : ''}" style="margin-top:12px">${icon('info')}<span>${escapeHtml(status[1])}</span></div>
     </section>`;
@@ -2072,7 +2073,11 @@ async function renderAdmin(token, signal) {
       api('/api/auth/debug', { signal }).catch(() => null),
     ]);
     if (token !== state.renderToken) return;
-    setView(adminDashboard({ ...stats, username: session.username }, titlesData.titles || [], debug));
+    setView(adminDashboard(
+      { ...stats, username: session.username },
+      titlesData.titles || [],
+      debug ? { ...debug, serverKeyFingerprint: stats.serverKeyFingerprint || debug.serverKeyFingerprint } : null,
+    ));
   } catch (error) {
     if (error.status === 401) {
       setView(adminLoginPage('登录已失效，请重新登录'));

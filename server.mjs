@@ -2195,23 +2195,40 @@ const server = http.createServer(async (req, res) => {
           state_matched: Boolean(pending),
           state_candidates: stateCandidates.length,
         });
+        // Steam 的错误回跳往往带额外参数，全部记下来便于定位
+        const extraParams = [...url.searchParams.entries()]
+          .filter(([name]) => name.startsWith('openid.') && !['openid.mode', 'openid.claimed_id',
+            'openid.identity', 'openid.ns', 'openid.return_to', 'openid.signed', 'openid.sig',
+            'openid.sig_alg', 'openid.op_endpoint'].includes(name));
+        if (extraParams.length) {
+          console.warn('[auth] Steam 附带的错误参数:', Object.fromEntries(extraParams));
+        }
 
         if (!pending || Date.now() - pending.createdAt > AUTH_STATE_TTL_MS) {
           fail('登录请求已过期，请重新发起登录', 'OPENID_STATE_EXPIRED');
           return;
         }
         if (url.searchParams.get('openid.mode') !== 'id_res') {
-          // Steam 只有在「回调域名已登记在 API Key 里」时才会走完握手并回传 id_res，
-          // 否则它会直接跳回一个错误页（没有 openid.mode 参数）。
+          // Steam 只有在「回调域名已登记在 API Key 里」时才会走完握手并回传 id_res。
+          // 否则它会回跳 openid.mode=error / cancel（有时带 openid.error 说明原因）。
           const origin = publicOrigin(req);
           const host = hostOf(origin);
           const callbackUrl = `${origin}/api/auth/callback`;
+          const mode = url.searchParams.get('openid.mode') || 'unknown';
+          const steamError = url.searchParams.get('openid.error') || '';
+          const steamErrorText = url.searchParams.get('openid.error_description')
+            || url.searchParams.get('openid.error_message') || '';
           // Steam 只接受真正的域名，IP 和 localhost 都不行
           const isIpLike = /^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host === 'localhost' || host === '::1';
           const looksLikeDomain = !isIpLike
             && /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i.test(host);
           const isHttps = origin.startsWith('https://');
           const hints = [];
+          if (mode === 'error') {
+            hints.push('Steam 拒绝了这次登录请求（openid.mode=error）');
+          } else if (mode === 'cancel') {
+            hints.push('这次登录在 Steam 上被取消或未通过授权');
+          }
           if (!looksLikeDomain) {
             hints.push('Steam 不接受 IP 作为回调域名，请改用域名访问本站');
           }
@@ -2222,8 +2239,11 @@ const server = http.createServer(async (req, res) => {
           if (!isHttps) {
             hints.push('如果浏览器里用的是 https 地址，请让反向代理转发 X-Forwarded-Proto: https，或设置 PUBLIC_ORIGIN=https://' + host);
           }
+          const reason = steamError
+            ? `Steam 的原始错误：${steamError}${steamErrorText ? `（${steamErrorText}）` : ''}`
+            : '';
           fail(
-            `Steam 没有完成 OpenID 握手：${hints.join('；')}。（当前回调地址 ${callbackUrl}）`,
+            `Steam 没有完成 OpenID 握手：${hints.join('；')}。${reason}（当前回调地址 ${callbackUrl}）`,
             'OPENID_INVALID',
           );
           return;
@@ -2406,6 +2426,7 @@ const server = http.createServer(async (req, res) => {
           version: APP_VERSION,
           uptime: Math.round(process.uptime()),
           serverKey: Boolean(SERVER_KEY),
+          serverKeyFingerprint: SERVER_KEY ? `****${SERVER_KEY.slice(-6).toUpperCase()}` : null,
           regions: REGIONS.length,
           cachedEntries: cache.size,
           pendingFetches: pendingFetches.size,
