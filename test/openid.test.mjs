@@ -28,14 +28,18 @@ const claimed = `https://steamcommunity.com/openid/id/${STEAM_ID}`;
 const NS = 'http://specs.openid.net/auth/2.0';
 
 // 1. Kick off the login to obtain the server-issued state + return_to.
+// The state now travels in a cookie (the return_to stays clean, like Steam's
+// own example), so it has to be read from Set-Cookie.
 const loginRes = await fetch(`${BASE}/api/auth/login`, { redirect: 'manual' });
 const location = loginRes.headers.get('location') || '';
 const returnTo = new URL(location).searchParams.get('openid.return_to') || '';
-const state = new URL(returnTo).searchParams.get('state') || '';
+const stateCookie = (loginRes.headers.get('set-cookie') || '').split(';')[0];
+const state = decodeURIComponent((stateCookie.match(/steam_atlas_state=([^;]+)/) || [])[1] || '');
 console.log('login status       :', loginRes.status);
 console.log('state issued       :', state.length === 32 ? 'yes' : 'NO');
 console.log('return_to captured :', new URL(returnTo).pathname === '/api/auth/callback' ? 'yes' : 'NO');
 console.log('return_to origin   :', new URL(returnTo).origin);
+console.log('return_to clean    :', new URL(returnTo).search === '' ? 'yes' : 'NO (带查询串)');
 
 // Steam 的身份地址必须用 http://，且用通用占位身份 76561197960287930
 const claimedId = new URL(location).searchParams.get('openid.claimed_id') || '';
@@ -75,11 +79,15 @@ async function freshLogin() {
   const res = await fetch(`${BASE}/api/auth/login`, { redirect: 'manual' });
   const location = res.headers.get('location') || '';
   const returnTo = new URL(location).searchParams.get('openid.return_to') || '';
-  return { state: new URL(returnTo).searchParams.get('state') || '', returnTo };
+  const cookie = (res.headers.get('set-cookie') || '').split(';')[0];
+  const state = decodeURIComponent((cookie.match(/steam_atlas_state=([^;]+)/) || [])[1] || '');
+  return { state, returnTo, cookie };
 }
 
 // 2. Tampered signature must be rejected.
-const tamperRes = await fetch(`${BASE}/api/auth/callback?${signResponse(returnTo, { tamper: true })}`, { redirect: 'manual' });
+const tamperRes = await fetch(`${BASE}/api/auth/callback?${signResponse(returnTo, { tamper: true })}`, {
+  redirect: 'manual', headers: { Cookie: stateCookie },
+});
 const tamperTarget = new URL(tamperRes.headers.get('location') || '');
 console.log('tampered rejected  :', tamperTarget.searchParams.get('auth') === 'error' ? 'yes' : 'NO');
 
@@ -87,7 +95,9 @@ console.log('tampered rejected  :', tamperTarget.searchParams.get('auth') === 'e
 const second = await freshLogin();
 
 // 4. Correctly signed response must create a session.
-const okRes = await fetch(`${BASE}/api/auth/callback?${signResponse(second.returnTo)}`, { redirect: 'manual' });
+const okRes = await fetch(`${BASE}/api/auth/callback?${signResponse(second.returnTo)}`, {
+  redirect: 'manual', headers: { Cookie: second.cookie },
+});
 const okTarget = new URL(okRes.headers.get('location') || '');
 const cookie = (okRes.headers.get('set-cookie') || '').split(';')[0];
 console.log('valid accepted     :', okTarget.searchParams.get('auth') === 'ok' ? 'yes' : `NO (${okTarget.searchParams.get('reason') || 'no reason'})`);
@@ -95,14 +105,16 @@ console.log('cookie issued      :', cookie.startsWith('steam_atlas_sid=') ? 'yes
 
 // 4b. The alternative slash-safe encoding must be accepted as well.
 const third = await freshLogin();
-const altRes = await fetch(`${BASE}/api/auth/callback?${signResponse(third.returnTo, { encoder: 'slashSafe' })}`, { redirect: 'manual' });
+const altRes = await fetch(`${BASE}/api/auth/callback?${signResponse(third.returnTo, { encoder: 'slashSafe' })}`, {
+  redirect: 'manual', headers: { Cookie: third.cookie },
+});
 const altTarget = new URL(altRes.headers.get('location') || '');
 console.log('alt encoding ok    :', altTarget.searchParams.get('auth') === 'ok' ? 'yes' : 'NO');
 
 // 4c. A mangled state (Steam appending its query with `?`) must still resolve.
 const fourth = await freshLogin();
 const mangledUrl = `${BASE}/api/auth/callback?state=${encodeURIComponent(`${fourth.state}?openid.mode=id_res`)}&${signResponse(fourth.returnTo)}`;
-const mangledRes = await fetch(mangledUrl, { redirect: 'manual' });
+const mangledRes = await fetch(mangledUrl, { redirect: 'manual', headers: { Cookie: fourth.cookie } });
 const mangledTarget = new URL(mangledRes.headers.get('location') || '');
 console.log('mangled state ok   :', mangledTarget.searchParams.get('auth') === 'ok' ? 'yes' : 'NO');
 

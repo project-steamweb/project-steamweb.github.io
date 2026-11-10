@@ -2170,13 +2170,15 @@ const server = http.createServer(async (req, res) => {
       if (pathname === '/api/auth/login') {
         const state = crypto.randomBytes(16).toString('hex');
         const origin = publicOrigin(req);
+        // Steam 官方示例里的 return_to 是干净地址（不带查询串），这里保持一致，
+        // 防 CSRF 的 state 放在 Cookie 里随回跳带回来。
         const returnTo = new URL('/api/auth/callback', origin);
-        returnTo.searchParams.set('state', state);
         authStates.set(state, { returnTo: returnTo.toString(), origin, createdAt: Date.now() });
         res.writeHead(302, {
           Location: buildOpenIdUrl(returnTo.toString()),
-          // The state also travels in a cookie: Steam may rewrite the
-          // return_to query string, and the cookie survives that.
+          // The state travels in a cookie: it survives Steam rewriting the
+          // return_to query string, and a SameSite=Lax cookie is still sent on
+          // the top-level redirect back from Steam.
           'Set-Cookie': stateCookie(state, { secure: origin.startsWith('https://') }),
           'Cache-Control': 'no-store',
         });
