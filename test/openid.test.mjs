@@ -21,7 +21,8 @@ function decryptStoredKey() {
 }
 
 const apiKey = decryptStoredKey();
-const BASE = 'http://127.0.0.1:8787';
+// 默认测本机；部署到域名后可以用 BASE_URL=https://你的域名 来测线上握手
+const BASE = (process.env.BASE_URL || 'http://127.0.0.1:8787').replace(/\/+$/, '');
 const STEAM_ID = '76561197960287930';
 const claimed = `https://steamcommunity.com/openid/id/${STEAM_ID}`;
 const NS = 'http://specs.openid.net/auth/2.0';
@@ -33,7 +34,8 @@ const returnTo = new URL(location).searchParams.get('openid.return_to') || '';
 const state = new URL(returnTo).searchParams.get('state') || '';
 console.log('login status       :', loginRes.status);
 console.log('state issued       :', state.length === 32 ? 'yes' : 'NO');
-console.log('return_to captured :', returnTo.startsWith(`${BASE}/api/auth/callback`) ? 'yes' : 'NO');
+console.log('return_to captured :', new URL(returnTo).pathname === '/api/auth/callback' ? 'yes' : 'NO');
+console.log('return_to origin   :', new URL(returnTo).origin);
 
 function signResponse(returnToValue, { tamper = false, encoder = 'standard' } = {}) {
   const fields = {
