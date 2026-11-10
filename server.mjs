@@ -1524,14 +1524,22 @@ async function getProfile(rawInput, key) {
 const OPENID_NS = 'http://specs.openid.net/auth/2.0';
 const OPENID_ENDPOINT = `${COMMUNITY_ORIGIN}/openid/login`;
 // Steam validates the claimed_id / identity pair and rejects anything that is
-// not a real identity URL ("Invalid claimed_id or identity"). An empty value is
-// therefore not an option — the placeholder has to look like a SteamID profile.
+// not a real identity URL ("Invalid claimed_id or identity"). Two details
+// matter: the value must not be empty, and it must use the **http** scheme —
+// Steam's own identity URLs are http://steamcommunity.com/openid/id/<SteamID>,
+// an https:// variant is refused.
 // The default is the site owner's account; set STEAM_OPENID_CLAIMED_ID to use a
-// different SteamID (or a generic placeholder Steam accepts for any account).
+// different SteamID (e.g. the generic 76561197960287930 Steam accepts for
+// "any account" sign-in).
 const OPENID_CLAIMED_ID = (
   process.env.STEAM_OPENID_CLAIMED_ID
-  || `https://steamcommunity.com/openid/id/${DEFAULT_OWNER_STEAM_ID}`
+  || `http://steamcommunity.com/openid/id/${DEFAULT_OWNER_STEAM_ID}`
 ).trim();
+// Steam echoes the identity back as http://…, but accept https:// as well.
+const steamIdFromIdentity = (value) => {
+  const match = /^https?:\/\/steamcommunity\.com\/openid\/id\/(\d{17})$/i.exec(String(value || '').trim());
+  return match ? match[1] : '';
+};
 const SESSION_COOKIE = 'steam_atlas_sid';
 const STATE_COOKIE = 'steam_atlas_state';
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7;
@@ -2263,7 +2271,7 @@ const server = http.createServer(async (req, res) => {
             hints.push('这次登录在 Steam 上被取消或未通过授权');
           }
           if (looksLikeClaimIdProblem) {
-            hints.push(`Steam 不接受当前请求里的 claimed_id（${OPENID_CLAIMED_ID}），它必须是合法的 Steam 身份地址`);
+            hints.push(`Steam 不接受当前请求里的 claimed_id（${OPENID_CLAIMED_ID}），它必须是 http://steamcommunity.com/openid/id/<17位SteamID> 这样的合法身份地址`);
           }
           if (!looksLikeDomain) {
             hints.push('Steam 不接受 IP 作为回调域名，请改用域名访问本站');
@@ -2294,8 +2302,15 @@ const server = http.createServer(async (req, res) => {
         const claimedId = url.searchParams.get('openid.claimed_id') || '';
         const identity = url.searchParams.get('openid.identity') || '';
         const returnTo = url.searchParams.get('openid.return_to') || '';
-        if (claimedId !== identity) {
-          fail('OpenID 身份校验失败', 'OPENID_INVALID');
+        // 按 SteamID 比对，http/https 两种写法都接受
+        const claimedSteamId = steamIdFromIdentity(claimedId);
+        const identitySteamId = steamIdFromIdentity(identity);
+        if (!claimedSteamId || !identitySteamId || claimedSteamId !== identitySteamId) {
+          console.warn('[auth] 身份校验失败:', { claimed_id: claimedId, identity });
+          fail(
+            `OpenID 身份校验失败（claimed_id=${claimedId || '空'}，identity=${identity || '空'}）`,
+            'OPENID_INVALID',
+          );
           return;
         }
         if (returnTo && !sameReturnTarget(returnTo, pending.returnTo)) {
@@ -2309,7 +2324,7 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        const steamId = claimedId.split('/openid/id/')[1] || '';
+        const steamId = claimedSteamId;
         if (!/^\d{17}$/.test(steamId)) {
           fail('无法从 OpenID 响应中解析 SteamID', 'OPENID_INVALID');
           return;

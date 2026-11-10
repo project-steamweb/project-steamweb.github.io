@@ -8,8 +8,7 @@ Set-Location -Path $root
 
 $port = if ($env:PORT) { $env:PORT } else { '8787' }
 $logDir = Join-Path $root 'logs'
-$logFile = Join-Path $logDir 'server.log'
-$errFile = Join-Path $logDir 'server.err.log'
+$logFile = Join-Path $logDir "server-$port.log"
 $startLog = Join-Path $logDir 'startup.log'
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 
@@ -47,8 +46,16 @@ Write-Log "使用 Node: $node"
 # 服务起来之后再打开浏览器
 Start-Process powershell -WindowStyle Hidden -Command "Start-Sleep -Seconds 3; Start-Process 'http://127.0.0.1:$port'"
 
-# 这个 PowerShell 会一直托管 node 进程：窗口是隐藏的，但它会跟着服务一直活着。
+# 这个 PowerShell 会一直托管服务：窗口是隐藏的，但它会跟着服务一直活着。
 # 停止服务请运行项目根目录的 停止服务.cmd（它按端口结束进程）。
-Write-Log '服务已启动（窗口隐藏，日志见 logs\server.log）。停止服务请运行 停止服务.cmd。'
+Write-Log "服务已启动（端口 $port，窗口隐藏，日志见 logs\server-$port.log）。停止服务请运行 停止服务.cmd。"
 & $node server.mjs 2>&1 | Out-File -FilePath $logFile -Append -Encoding utf8
-Write-Log '服务已退出。'
+
+# 有些 Node 运行时（例如 Electron 承载的 node.cmd）会脱离父进程直接返回，
+# 这里改为按端口守着：只要服务还活着就保持窗口存活，服务停了才退出。
+while ($true) {
+  Start-Sleep -Seconds 5
+  $up = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
+  if (-not $up) { break }
+}
+Write-Log "服务已退出（端口 $port 不再监听）。"

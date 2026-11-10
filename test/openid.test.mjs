@@ -37,6 +37,13 @@ console.log('state issued       :', state.length === 32 ? 'yes' : 'NO');
 console.log('return_to captured :', new URL(returnTo).pathname === '/api/auth/callback' ? 'yes' : 'NO');
 console.log('return_to origin   :', new URL(returnTo).origin);
 
+// Steam 的身份地址必须用 http://，https:// 会被判 "Invalid claimed_id or identity"
+const claimedId = new URL(location).searchParams.get('openid.claimed_id') || '';
+const identityParam = new URL(location).searchParams.get('openid.identity') || '';
+const identityOk = /^http:\/\/steamcommunity\.com\/openid\/id\/\d{17}$/.test(claimedId)
+  && claimedId === identityParam;
+console.log('claimed_id valid   :', identityOk ? 'yes' : `NO (${claimedId})`);
+
 function signResponse(returnToValue, { tamper = false, encoder = 'standard' } = {}) {
   const fields = {
     ns: NS,
@@ -112,4 +119,9 @@ if (cookie) {
   const afterRes = await fetch(`${BASE}/api/auth/session`, { headers: { Cookie: cookie } });
   const after = await afterRes.json();
   console.log('logout cleared     :', after.authenticated === false ? 'yes' : 'NO');
+}
+
+if (!identityOk) {
+  console.log('\nFAILED: claimed_id 必须是 http://steamcommunity.com/openid/id/<17位SteamID>');
+  process.exit(1);
 }
