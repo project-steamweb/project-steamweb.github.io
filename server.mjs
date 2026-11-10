@@ -2277,7 +2277,9 @@ const server = http.createServer(async (req, res) => {
             hints.push('这次登录在 Steam 上被取消或未通过授权');
           }
           if (looksLikeClaimIdProblem) {
-            hints.push(`Steam 不接受当前请求里的 claimed_id（${OPENID_CLAIMED_ID}）：它必须是 http://steamcommunity.com/openid/id/<SteamID>，且要么用 Steam 的通用占位身份 76561197960287930，要么用当前登录账号自己的 SteamID`);
+            // Steam 只有在能按 return_to 的域名找到 API Key 时才会完成握手，
+            // 找不到时它会回这句误导性的 "Invalid claimed_id or identity"。
+            hints.push(`Steam 拒绝了身份校验（Invalid claimed_id or identity）：这两种情况都会触发它 —— ① claimed_id 必须是 Steam 认可的身份地址（http://steamcommunity.com/openid/id/<SteamID>，通用占位身份 76561197960287930 最稳）；② Steam 必须能按回跳域名「${host}」找到这把 API Key，所以请在 API Key 页面把「网站域名」(Website) 填成 ${host}，「域名名称」(Domain) 也填上，然后点「注册我的 Steam Web API 密钥」`);
           }
           if (!looksLikeDomain) {
             hints.push('Steam 不接受 IP 作为回调域名，请改用域名访问本站');
