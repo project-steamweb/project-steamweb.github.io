@@ -54,7 +54,7 @@ function decryptStoredKey() {
 }
 
 const SERVER_KEY = (process.env.STEAM_API_KEY || decryptStoredKey() || '').trim();
-const APP_VERSION = '1.0.8';
+const APP_VERSION = '1.1.0';
 
 // Site titles shown after the Steam persona name. Keys are SteamID64 strings.
 // Add or remove entries here; the client only renders what the server returns.
@@ -1037,6 +1037,105 @@ async function getProfile(rawInput, key) {
   }
 }
 
+/* =========================================================
+   Steam OpenID 2.0 login + local sessions
+   Steam has no OAuth; the official way to sign a user in is
+   the Steam OpenID 2.0 provider with a signed checkid_setup
+   handshake, verified with the server-side Web API key.
+   ========================================================= */
+const OPENID_NS = 'http://specs.openid.net/auth/2.0';
+const OPENID_ENDPOINT = `${COMMUNITY_ORIGIN}/openid/login`;
+const OPENID_IDENTITY = 'https://steamcommunity.com/openid/id/76561197960265729';
+const SESSION_COOKIE = 'steam_atlas_sid';
+const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7;
+const AUTH_STATE_TTL_MS = 1000 * 60 * 10;
+
+const authSessions = new Map();
+const authStates = new Map();
+
+function parseCookies(req) {
+  const header = req.headers.cookie || '';
+  const jar = {};
+  for (const part of header.split(';')) {
+    const index = part.indexOf('=');
+    if (index < 1) continue;
+    try {
+      jar[part.slice(0, index).trim()] = decodeURIComponent(part.slice(index + 1).trim());
+    } catch {
+      jar[part.slice(0, index).trim()] = '';
+    }
+  }
+  return jar;
+}
+
+function buildOpenIdUrl(returnTo) {
+  const params = new URLSearchParams({
+    'openid.ns': OPENID_NS,
+    'openid.mode': 'checkid_setup',
+    'openid.claimed_id': OPENID_IDENTITY,
+    'openid.identity': OPENID_IDENTITY,
+    'openid.return_to': returnTo,
+  });
+  return `${OPENID_ENDPOINT}?${params.toString()}`;
+}
+
+// OpenID 2.0 signature: HMAC-SHA1 over the signed fields, in the exact order
+// listed by openid.signed, each rendered as `field=urlencoded(value)` joined
+// by `&`, keyed with the shared secret (the Steam Web API key).
+function verifyOpenIdSignature(params, apiKey) {
+  const signed = (params.get('openid.signed') || '').split(',').map((item) => item.trim()).filter(Boolean);
+  if (!signed.length) throw new HttpError(400, 'OpenID 响应缺少签名信息', 'OPENID_INVALID');
+  for (const field of ['signed', 'claimed_id', 'identity', 'return_to', 'ns']) {
+    if (!signed.includes(field)) throw new HttpError(400, 'OpenID 签名字段不完整', 'OPENID_INVALID');
+  }
+  const payload = signed
+    .map((field) => `${field}=${encodeURIComponent(params.get(`openid.${field}`) || '')}`)
+    .join('&');
+  const expected = crypto.createHmac('sha1', apiKey).update(payload).digest('base64');
+  const actual = params.get('openid.sig') || '';
+  const left = Buffer.from(expected);
+  const right = Buffer.from(actual);
+  if (left.length !== right.length || !crypto.timingSafeEqual(left, right)) {
+    throw new HttpError(400, 'OpenID 签名校验失败', 'OPENID_BAD_SIGNATURE');
+  }
+  return signed;
+}
+
+async function fetchPlayerSummary(steamId, key) {
+  const url = `${WEB_API_ORIGIN}/ISteamUser/GetPlayerSummaries/v2/?key=${encodeURIComponent(key)}&steamids=${encodeURIComponent(steamId)}`;
+  const response = await fetch(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(12000) });
+  if (!response.ok) {
+    throw new HttpError(502, `Steam 上游返回了 ${response.status}`, response.status === 403 ? 'STEAM_API_FORBIDDEN' : 'UPSTREAM_ERROR');
+  }
+  const data = await response.json();
+  return data?.response?.players?.[0] || null;
+}
+
+function createSession(user) {
+  const token = crypto.randomBytes(24).toString('hex');
+  authSessions.set(token, { ...user, createdAt: Date.now(), expiresAt: Date.now() + SESSION_TTL_MS });
+  return token;
+}
+
+function readSession(req) {
+  const token = parseCookies(req)[SESSION_COOKIE];
+  if (!token) return null;
+  const session = authSessions.get(token);
+  if (!session) return null;
+  if (session.expiresAt < Date.now()) {
+    authSessions.delete(token);
+    return null;
+  }
+  return { token, ...session };
+}
+
+function sessionCookie(token, { clear = false } = {}) {
+  const parts = [`${SESSION_COOKIE}=${clear ? '' : token}`, 'Path=/', 'HttpOnly', 'SameSite=Lax'];
+  if (clear) parts.push('Max-Age=0');
+  else parts.push(`Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`);
+  return parts.join('; ');
+}
+
 function sendJson(res, status, payload) {
   const body = JSON.stringify(payload);
   res.writeHead(status, {
@@ -1138,8 +1237,10 @@ const server = http.createServer(async (req, res) => {
   const started = Date.now();
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
   const pathname = url.pathname;
+  const method = req.method || 'GET';
+  const postAllowed = method === 'POST' && pathname === '/api/auth/logout';
 
-  if (!['GET', 'HEAD'].includes(req.method || 'GET')) {
+  if (!['GET', 'HEAD'].includes(method) && !postAllowed) {
     sendJson(res, 405, { error: 'Method not allowed' });
     return;
   }
@@ -1211,6 +1312,138 @@ const server = http.createServer(async (req, res) => {
         const query = url.searchParams.get('id') || '';
         const profile = await getProfile(query, SERVER_KEY);
         sendJson(res, 200, profile);
+        return;
+      }
+
+      if (pathname === '/api/auth/login') {
+        const state = crypto.randomBytes(16).toString('hex');
+        const host = req.headers.host || `127.0.0.1:${PORT}`;
+        const returnTo = new URL('/api/auth/callback', `http://${host}`);
+        returnTo.searchParams.set('state', state);
+        authStates.set(state, { returnTo: returnTo.toString(), createdAt: Date.now() });
+        res.writeHead(302, { Location: buildOpenIdUrl(returnTo.toString()), 'Cache-Control': 'no-store' });
+        res.end();
+        return;
+      }
+
+      if (pathname === '/api/auth/callback') {
+        const rawReturnTo = url.searchParams.get('openid.return_to') || '';
+        // Steam echoes openid.return_to verbatim, so the state may live in the
+        // callback query string or only inside the echoed return_to URL.
+        let state = url.searchParams.get('state') || '';
+        if (!state && rawReturnTo) {
+          try { state = new URL(rawReturnTo).searchParams.get('state') || ''; } catch { state = ''; }
+        }
+        const pending = authStates.get(state);
+        authStates.delete(state);
+        const fail = (message, code) => {
+          const target = new URL('/', `http://${req.headers.host || `127.0.0.1:${PORT}`}`);
+          target.searchParams.set('auth', 'error');
+          target.searchParams.set('reason', message);
+          res.writeHead(302, { Location: target.toString(), 'Cache-Control': 'no-store' });
+          res.end();
+          void code;
+        };
+
+        if (!pending || Date.now() - pending.createdAt > AUTH_STATE_TTL_MS) {
+          fail('登录请求已过期，请重新发起登录', 'OPENID_STATE_EXPIRED');
+          return;
+        }
+        if (url.searchParams.get('openid.mode') !== 'id_res') {
+          fail('Steam 未返回有效的 OpenID 响应', 'OPENID_INVALID');
+          return;
+        }
+        if (!SERVER_KEY) {
+          fail('服务端未配置 Steam Web API Key，无法校验登录', 'STEAM_KEY_MISSING');
+          return;
+        }
+
+        const claimedId = url.searchParams.get('openid.claimed_id') || '';
+        const identity = url.searchParams.get('openid.identity') || '';
+        const returnTo = url.searchParams.get('openid.return_to') || '';
+        if (claimedId !== identity) {
+          fail('OpenID 身份校验失败', 'OPENID_INVALID');
+          return;
+        }
+        if (returnTo !== pending.returnTo) {
+          fail('OpenID 返回地址校验失败', 'OPENID_RETURN_MISMATCH');
+          return;
+        }
+        try {
+          verifyOpenIdSignature(url.searchParams, SERVER_KEY);
+        } catch (error) {
+          fail(error.message || 'OpenID 签名校验失败', error.code || 'OPENID_BAD_SIGNATURE');
+          return;
+        }
+
+        const steamId = claimedId.split('/openid/id/')[1] || '';
+        if (!/^\d{17}$/.test(steamId)) {
+          fail('无法从 OpenID 响应中解析 SteamID', 'OPENID_INVALID');
+          return;
+        }
+
+        let player = null;
+        try {
+          player = await fetchPlayerSummary(steamId, SERVER_KEY);
+        } catch (error) {
+          fail(error.message || '无法读取 Steam 账号信息', error.code || 'UPSTREAM_ERROR');
+          return;
+        }
+        if (!player) {
+          fail('Steam 未返回该账号的信息', 'OPENID_UNKNOWN_USER');
+          return;
+        }
+
+        const token = createSession({
+          steamId,
+          personaName: player.personaname || 'Steam 玩家',
+          realName: player.realname || null,
+          avatar: player.avatarfull || player.avatarmedium || '',
+          profileUrl: player.profileurl || `${COMMUNITY_ORIGIN}/profiles/${steamId}`,
+          visibility: parseVisibility(null, player.communityvisibilitystate),
+        });
+        const target = new URL('/', `http://${req.headers.host || `127.0.0.1:${PORT}`}`);
+        target.searchParams.set('auth', 'ok');
+        res.writeHead(302, {
+          Location: target.toString(),
+          'Set-Cookie': sessionCookie(token),
+          'Cache-Control': 'no-store',
+        });
+        res.end();
+        return;
+      }
+
+      if (pathname === '/api/auth/session') {
+        const session = readSession(req);
+        sendJson(res, 200, {
+          authenticated: Boolean(session),
+          user: session
+            ? {
+                steamId: session.steamId,
+                personaName: session.personaName,
+                realName: session.realName,
+                avatar: session.avatar,
+                profileUrl: session.profileUrl,
+                visibility: session.visibility,
+              }
+            : null,
+        });
+        return;
+      }
+
+      if (pathname === '/api/auth/logout') {
+        const session = readSession(req);
+        if (session) authSessions.delete(session.token);
+        res.setHeader('Set-Cookie', sessionCookie('', { clear: true }));
+        sendJson(res, 200, { ok: true });
+        return;
+      }
+
+      if (pathname === '/api/auth/me') {
+        const session = readSession(req);
+        if (!session) throw new HttpError(401, '尚未登录 Steam 账号', 'NOT_AUTHENTICATED');
+        const profile = await getProfile(session.steamId, SERVER_KEY);
+        sendJson(res, 200, { ...profile, session: { steamId: session.steamId, personaName: session.personaName } });
         return;
       }
 

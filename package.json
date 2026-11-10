@@ -1,12 +1,13 @@
 {
   "name": "steam-atlas",
-  "version": "1.0.9",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
-  "description": "Steam Atlas · 蒸汽图鉴：Steam 游戏资料、全球 16 区价格与玩家公开档案查询",
+  "description": "Steam Atlas · 蒸汽图鉴：Steam 游戏资料、全球 16 区价格、玩家公开档案查询、Steam 登录与浏览器扩展",
   "scripts": {
     "start": "node server.mjs",
-    "dev": "node --watch server.mjs"
+    "dev": "node --watch server.mjs",
+    "test": "node test/openid.test.mjs"
   },
   "engines": {
     "node": ">=20"

@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Steam Atlas 助手</title>
+  <link rel="stylesheet" href="panel.css">
+</head>
+<body>
+  <header class="head">
+    <div class="brand">
+      <span class="mark">SA</span>
+      <span class="brand-text"><b>Steam Atlas</b><small>助手</small></span>
+    </div>
+    <button class="ghost" id="open-side" type="button" title="在侧边栏中打开">侧边栏</button>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button class="tab active" data-tab="search" role="tab">搜索</button>
+    <button class="tab" data-tab="library" role="tab">我的库</button>
+    <button class="tab" data-tab="account" role="tab">账号</button>
+  </nav>
+
+  <main class="body">
+    <section class="pane active" data-pane="search">
+      <form class="search" id="search-form">
+        <input id="search-input" type="search" placeholder="搜索 Steam 游戏…" autocomplete="off">
+        <button type="submit">搜索</button>
+      </form>
+      <p class="hint" id="search-hint">输入关键词，结果来自 Steam 商店公开接口。</p>
+      <ul class="list" id="search-results"></ul>
+    </section>
+
+    <section class="pane" data-pane="library">
+      <div class="row">
+        <input id="steam-id" type="text" placeholder="SteamID64 / 个性域名" autocomplete="off">
+        <button id="load-library" type="button">读取</button>
+      </div>
+      <p class="hint" id="library-hint">需要填写 Steam Web API Key 才能读取游戏库。</p>
+      <div class="stats" id="library-stats" hidden>
+        <div class="stat"><label>游戏数量</label><b id="stat-count">—</b></div>
+        <div class="stat"><label>总时长</label><b id="stat-hours">—</b></div>
+      </div>
+      <ul class="list" id="library-results"></ul>
+    </section>
+
+    <section class="pane" data-pane="account">
+      <div class="profile" id="profile-card" hidden>
+        <img id="profile-avatar" alt="">
+        <div class="profile-copy">
+          <b id="profile-name">—</b>
+          <small id="profile-id">—</small>
+        </div>
+      </div>
+      <div class="row">
+        <input id="api-key" type="password" placeholder="Steam Web API Key（仅保存在本机）" autocomplete="off">
+        <button id="save-key" type="button">保存</button>
+      </div>
+      <p class="hint">
+        Key 只写入本机扩展存储，用于调用 Steam Web API；不会发送给 Steam Atlas 网站或任何第三方。
+        获取地址：steamcommunity.com/dev/apikey
+      </p>
+      <ul class="list" id="account-results"></ul>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <span id="status">就绪</span>
+    <a href="https://github.com/project-steamweb/project-steamweb.github.io" target="_blank" rel="noopener">GitHub</a>
+  </footer>
+
+  <script src="panel.js"></script>
+</body>
+</html>

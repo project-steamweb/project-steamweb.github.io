@@ -7,7 +7,7 @@
   <meta name="description" content="Steam Atlas：查询 Steam 游戏资料、全球 16 个区服价格，以及玩家公开档案。">
   <title>Steam Atlas · 蒸汽图鉴</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/styles.css?v=1.0.9">
+  <link rel="stylesheet" href="/styles.css?v=1.1.0">
 </head>
 <body>
   <svg class="svg-sprite" aria-hidden="true" focusable="false">
@@ -96,6 +96,14 @@
           <span class="side-region-copy"><b id="side-region-name">中国</b><small id="side-region-currency">CNY · 人民币</small></span>
           <svg class="chevron"><use href="#i-chevron-down"></use></svg>
         </button>
+        <div class="side-login-wrap">
+          <button class="side-login" id="steam-login" type="button" data-action="steam-login" title="使用 Steam 账号登录">
+            <span class="login-avatar" id="login-avatar"><svg><use href="#i-user"></use></svg></span>
+            <span class="side-key-copy"><b id="login-name">Steam 登录</b><small id="login-status">登录后可查看我的档案</small></span>
+            <svg class="chevron"><use href="#i-arrow-up-right"></use></svg>
+          </button>
+          <button class="side-logout" id="steam-logout" type="button" data-action="steam-logout" hidden>退出登录</button>
+        </div>
         <div class="side-key">
           <span class="key-icon"><svg><use href="#i-key"></use></svg></span>
           <span class="side-key-copy"><b>Steam API</b><small id="side-key-status">公开模式</small></span>
@@ -135,6 +143,10 @@
             <span class="status-dot" id="api-chip-dot"></span>
             <span id="api-chip-label">官方 API</span>
           </div>
+          <a class="user-chip" id="user-chip" href="#/profile" hidden>
+            <span class="user-chip-avatar" id="user-chip-avatar"><svg><use href="#i-user"></use></svg></span>
+            <span id="user-chip-name">Steam 用户</span>
+          </a>
         </div>
       </header>
 
@@ -149,7 +161,7 @@
         <div class="footer-links">
           <a href="https://github.com/project-steamweb/project-steamweb.github.io" target="_blank" rel="noopener noreferrer">GitHub 仓库 <svg><use href="#i-arrow-up-right"></use></svg></a>
           <a href="https://store.steampowered.com/" target="_blank" rel="noopener noreferrer">Steam 商店 <svg><use href="#i-arrow-up-right"></use></svg></a>
-          <span>v1.0.9</span>
+          <span>v1.1.0</span>
         </div>
       </footer>
     </div>
@@ -174,6 +186,6 @@
 
   <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="false"></div>
 
-  <script type="module" src="/app.js?v=1.0.9"></script>
+  <script type="module" src="/app.js?v=1.1.0"></script>
 </body>
 </html>

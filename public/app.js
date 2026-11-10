@@ -34,6 +34,7 @@ const state = {
   recentProfiles: readJson(STORAGE.recentProfiles, []),
   currentGame: null,
   currentProfile: null,
+  session: null,
 };
 
 /* =========================================================
@@ -139,11 +140,11 @@ function isAbortError(error) {
   return error?.name === 'AbortError';
 }
 
-async function api(path, { signal } = {}) {
+async function api(path, { signal, method = 'GET' } = {}) {
   const headers = { Accept: 'application/json' };
   let response;
   try {
-    response = await fetch(path, { headers, signal });
+    response = await fetch(path, { headers, signal, method, credentials: 'same-origin' });
   } catch (error) {
     if (isAbortError(error)) throw error;
     throw new Error('无法连接本地 Steam Atlas 服务，请确认服务正在运行。');
@@ -396,21 +397,32 @@ function platformMarkup(platforms = {}) {
   return tags.length ? `<span class="platforms">${tags.join('')}</span>` : '';
 }
 
+function steamRunUrl(appid) {
+  return `steam://run/${appid}`;
+}
+
+function steamStoreUrl(appid) {
+  return `steam://store/${appid}`;
+}
+
 function gameCard(game, index, { rank = false } = {}) {
   const image = safeUrl(game.image || game.headerImage);
   const discount = Number(game.discountPercent || game.price?.discountPercent || 0);
   const free = game.isFree || game.price?.isFree || (game.price && Number(game.price.final) === 0);
   const initial = game.price?.initialFormatted;
   const showInitial = discount > 0 && initial && game.price?.initial > game.price?.final;
+  const name = escapeHtml(game.name);
   return `
-    <a class="game-card" href="${gamePath(game.appid)}" style="--i:${index}">
+    <div class="game-card" style="--i:${index}">
       <div class="game-cover">
-        ${image ? `<img src="${image}" alt="${escapeHtml(game.name)} 封面" loading="lazy">` : ''}
+        ${image ? `<img src="${image}" alt="${name} 封面" loading="lazy">` : ''}
+        <a class="card-hit" href="${gamePath(game.appid)}" aria-label="${name} 详情"></a>
         ${rank ? `<span class="rank-number">${String(index + 1).padStart(2, '0')}</span>` : ''}
         ${discount > 0 ? `<span class="discount-flag">−${discount}%</span>` : free ? '<span class="free-flag discount-flag">FREE</span>' : ''}
+        <a class="card-launch" href="${steamRunUrl(game.appid)}" title="用 Steam 客户端启动 ${name}" aria-label="用 Steam 客户端启动 ${name}">${icon('gamepad')}</a>
       </div>
       <div class="game-card-body">
-        <h3 class="game-card-title">${escapeHtml(game.name)}</h3>
+        <h3 class="game-card-title"><a href="${gamePath(game.appid)}">${name}</a></h3>
         <div class="game-card-meta">
           <span class="price-row">
             ${free ? '<span class="free">免费游玩</span>' : `<b>${escapeHtml(priceText(game.price))}</b>${showInitial ? `<s>${escapeHtml(initial)}</s>` : ''}`}
@@ -418,7 +430,7 @@ function gameCard(game, index, { rank = false } = {}) {
           ${game.metascore ? `<span class="metascore">${escapeHtml(game.metascore)}</span>` : platformMarkup(game.platforms)}
         </div>
       </div>
-    </a>`;
+    </div>`;
 }
 
 function gameGrid(games, { rank = false, className = '' } = {}) {
@@ -504,6 +516,7 @@ function heroStage(featured) {
             <small>${escapeHtml(region.code)} PRICE</small>
           </div>
           <a class="hero-enter" href="${gamePath(game.appid)}">查看资料 ${icon('arrow-up-right')}</a>
+          <a class="hero-enter hero-launch" href="${steamRunUrl(game.appid)}" title="用 Steam 客户端启动 ${escapeHtml(game.name)}">启动 ${icon('gamepad')}</a>
         </div>
       </div>
     </div>
@@ -697,11 +710,15 @@ function gameSpotlight(app) {
         ${discount > 0 && price?.initialFormatted ? `<s>${escapeHtml(price.initialFormatted)}</s><span>当前折扣</span>` : '<span>当前区服商店定价</span>'}
       </div>
       <a class="button primary" href="${escapeHtml(app.storeUrl)}" target="_blank" rel="noopener noreferrer">${icon('external')}前往 Steam 商店</a>
+      <a class="button ghost" href="${steamRunUrl(app.appid)}" style="width:100%;margin-top:7px;border-color:var(--line)" title="使用本机 Steam 客户端启动">${icon('gamepad')}用 Steam 客户端启动</a>
       <button class="button ghost" type="button" data-action="scroll-prices" style="width:100%;margin-top:7px;border-color:var(--line)">${icon('globe')}查看全球 16 区价格</button>
       <p class="spotlight-note">价格随 Steam 促销与地区政策变化，以商店结算页为准。</p>
       <div class="spotlight-divider"></div>
       <a class="spotlight-link" href="https://store.steampowered.com/app/${app.appid}/" target="_blank" rel="noopener noreferrer">
         <span>STORE PAGE · APP ${app.appid}</span>${icon('arrow-up-right')}
+      </a>
+      <a class="spotlight-link" href="${steamStoreUrl(app.appid)}" title="在 Steam 客户端中打开商店页">
+        <span>客户端商店页</span>${icon('gamepad')}
       </a>
     </aside>`;
 }
@@ -772,6 +789,7 @@ function gamePage(app) {
             </div>
             <div class="game-actions">
               <a class="button primary" href="${escapeHtml(app.storeUrl)}" target="_blank" rel="noopener noreferrer">${icon('external')}Steam 商店</a>
+              <a class="button" href="${steamRunUrl(app.appid)}" title="使用本机 Steam 客户端启动《${escapeHtml(app.name)}》">${icon('gamepad')}启动游戏</a>
               <button class="button" type="button" data-copy="${escapeHtml(`${window.location.origin}/#/game/${app.appid}`)}">${icon('copy')}复制链接</button>
             </div>
           </div>
@@ -1763,8 +1781,83 @@ function updateKeyUI() {
   if (chipLabel) chipLabel.textContent = connected ? '官方 API' : '公开模式';
 }
 
-function renderRegionControls() {
-  if (!regionListEl) return;
+/* =========================================================
+   Steam session (OpenID login)
+   ========================================================= */
+async function loadSession() {
+  try {
+    const data = await api('/api/auth/session');
+    state.session = data.authenticated ? data.user : null;
+  } catch {
+    state.session = null;
+  }
+  renderSessionUI();
+  return state.session;
+}
+
+function renderSessionUI() {
+  const user = state.session;
+  const loginButton = document.querySelector('#steam-login');
+  const loginName = document.querySelector('#login-name');
+  const loginStatus = document.querySelector('#login-status');
+  const loginAvatar = document.querySelector('#login-avatar');
+  const chip = document.querySelector('#user-chip');
+  const chipAvatar = document.querySelector('#user-chip-avatar');
+  const chipName = document.querySelector('#user-chip-name');
+  const logoutButton = document.querySelector('#steam-logout');
+
+  if (user) {
+    if (loginName) loginName.textContent = user.personaName || 'Steam 玩家';
+    if (loginStatus) loginStatus.textContent = '已登录 · 点击查看我的档案';
+    if (loginAvatar) {
+      const url = safeUrl(user.avatar);
+      loginAvatar.innerHTML = url ? `<img src="${url}" alt="">` : icon('user');
+      loginAvatar.classList.add('has-avatar');
+    }
+    if (loginButton) {
+      loginButton.dataset.action = 'my-profile';
+      loginButton.title = '查看我的 Steam 档案';
+    }
+    if (chip) {
+      chip.hidden = false;
+      chip.href = `#/profile/${encodeURIComponent(user.steamId)}`;
+    }
+    if (chipName) chipName.textContent = user.personaName || 'Steam 玩家';
+    if (chipAvatar) {
+      const url = safeUrl(user.avatar);
+      chipAvatar.innerHTML = url ? `<img src="${url}" alt="">` : icon('user');
+    }
+    if (logoutButton) logoutButton.hidden = false;
+  } else {
+    if (loginName) loginName.textContent = 'Steam 登录';
+    if (loginStatus) loginStatus.textContent = '登录后可查看我的档案';
+    if (loginAvatar) {
+      loginAvatar.innerHTML = icon('user');
+      loginAvatar.classList.remove('has-avatar');
+    }
+    if (loginButton) {
+      loginButton.dataset.action = 'steam-login';
+      loginButton.title = '使用 Steam 账号登录';
+    }
+    if (chip) chip.hidden = true;
+    if (logoutButton) logoutButton.hidden = true;
+  }
+}
+
+function handleAuthRedirect() {
+  const params = new URLSearchParams(window.location.search);
+  const auth = params.get('auth');
+  if (!auth) return;
+  const reason = params.get('reason') || '';
+  params.delete('auth');
+  params.delete('reason');
+  const query = params.toString();
+  window.history.replaceState(null, '', `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`);
+  if (auth === 'ok') toast('已通过 Steam 账号登录');
+  else toast(reason || 'Steam 登录失败，请重试', 'error');
+}
+
+function renderRegionControls() {  if (!regionListEl) return;
   regionListEl.innerHTML = state.regions.map((region) => `
     <button class="region-option ${region.cc === state.region ? 'active' : ''}" type="button" data-region-option="${region.cc}">
       <span class="region-code">${escapeHtml(region.code)}</span>
@@ -1872,7 +1965,7 @@ function initStaticEvents() {
   window.addEventListener('hashchange', renderRoute);
 }
 
-function handleDelegatedClick(event) {
+async function handleDelegatedClick(event) {
   const target = event.target;
   if (!(target instanceof Element)) return;
 
@@ -1944,6 +2037,23 @@ function handleDelegatedClick(event) {
 
   const action = target.closest('[data-action]')?.dataset.action;
   if (action === 'reload') { window.location.reload(); return; }
+  if (action === 'steam-login') {
+    window.location.href = '/api/auth/login';
+    return;
+  }
+  if (action === 'my-profile') {
+    if (state.session?.steamId) window.location.hash = `#/profile/${encodeURIComponent(state.session.steamId)}`;
+    return;
+  }
+  if (action === 'steam-logout') {
+    try {
+      await api('/api/auth/logout', { method: 'POST' });
+    } catch { /* ignore network errors, the cookie is cleared anyway */ }
+    state.session = null;
+    renderSessionUI();
+    toast('已退出 Steam 登录');
+    return;
+  }
   if (action === 'scroll-prices') {
     const board = document.querySelector('#price-board');
     if (board) {
@@ -2003,6 +2113,7 @@ async function boot() {
   initStaticEvents();
   bindSearchForms(document);
   bindImageFallbacks(document);
+  handleAuthRedirect();
   try {
     const config = await api('/api/config');
     state.config = config;
@@ -2012,6 +2123,7 @@ async function boot() {
     renderRegionControls();
     updateKeyUI();
     updateRegionUI();
+    await loadSession();
     await renderRoute();
     // Re-run after the first view is painted: the topbar form exists from the
     // start, but this also catches any form injected by the initial route.

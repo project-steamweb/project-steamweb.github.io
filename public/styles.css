@@ -276,6 +276,76 @@ svg { width: 1.25em; height: 1.25em; fill: none; stroke: currentColor; stroke-wi
 }
 .side-region { cursor: pointer; transition: border-color 180ms ease, background 180ms ease; }
 .side-region:hover { border-color: var(--line-strong); background: rgba(255, 255, 255, 0.04); }
+
+/* Steam session / login */
+.side-login-wrap { display: flex; flex-direction: column; gap: 6px; }
+.side-login {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.018);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 180ms ease, background 180ms ease;
+}
+.side-login:hover { border-color: rgba(110, 231, 200, 0.34); background: rgba(110, 231, 200, 0.06); }
+.login-avatar {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-raised);
+  color: var(--muted);
+  overflow: hidden;
+}
+.login-avatar svg { width: 14px; height: 14px; }
+.login-avatar.has-avatar { border-color: rgba(110, 231, 200, 0.34); }
+.login-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.side-logout {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted-2);
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+}
+.side-logout:hover { border-color: rgba(255, 123, 135, 0.4); color: var(--red); }
+.user-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 10px 4px 4px;
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  color: var(--text-soft);
+  font-size: 10px;
+  white-space: nowrap;
+  transition: border-color 180ms ease, background 180ms ease;
+}
+.user-chip:hover { border-color: rgba(110, 231, 200, 0.4); background: rgba(110, 231, 200, 0.07); }
+.user-chip-avatar {
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--panel-raised);
+  color: var(--muted);
+  overflow: hidden;
+}
+.user-chip-avatar svg { width: 11px; height: 11px; }
+.user-chip-avatar img { width: 100%; height: 100%; object-fit: cover; }
 .region-code {
   display: grid;
   place-items: center;
@@ -864,6 +934,9 @@ svg { width: 1.25em; height: 1.25em; fill: none; stroke: currentColor; stroke-wi
   white-space: nowrap;
 }
 .hero-enter:hover { border-color: var(--accent); color: var(--accent); }
+.hero-launch { border-color: rgba(110, 231, 200, 0.42); color: var(--accent-strong); }
+.hero-launch:hover { border-color: var(--accent); background: rgba(110, 231, 200, 0.14); }
+.hero-launch svg { width: 12px; height: 12px; }
 .hero-picks {
   position: relative;
   z-index: 4;
@@ -978,6 +1051,28 @@ svg { width: 1.25em; height: 1.25em; fill: none; stroke: currentColor; stroke-wi
   box-shadow: 0 16px 36px rgba(0, 0, 0, 0.32);
 }
 .game-card:hover .game-cover img { transform: scale(1.035); filter: saturate(1.05); }
+.card-hit { position: absolute; inset: 0; z-index: 1; }
+.card-launch {
+  position: absolute;
+  z-index: 2;
+  top: 8px;
+  right: 9px;
+  width: 27px;
+  height: 27px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: rgba(6, 10, 14, 0.74);
+  color: var(--muted);
+  opacity: 0;
+  transform: translateY(-3px);
+  transition: opacity 180ms ease, transform 180ms ease, color 180ms ease, border-color 180ms ease;
+}
+.card-launch svg { width: 13px; height: 13px; }
+.game-card:hover .card-launch { opacity: 1; transform: none; }
+.card-launch:hover { color: var(--accent); border-color: rgba(110, 231, 200, 0.5); }
+@media (hover: none) { .card-launch { opacity: 1; transform: none; } }
 .rank-number {
   position: absolute;
   z-index: 2;
@@ -1016,6 +1111,8 @@ svg { width: 1.25em; height: 1.25em; fill: none; stroke: currentColor; stroke-wi
   transition: color 160ms ease;
 }
 .game-card:hover .game-card-title { color: var(--text); }
+.game-card-title a { color: inherit; text-decoration: none; }
+.game-card-title a:hover { color: var(--text); }
 .game-card-meta {
   display: flex;
   align-items: center;

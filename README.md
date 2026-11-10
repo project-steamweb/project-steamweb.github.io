@@ -10,6 +10,9 @@ Steam 数据查询工具，包含：
 - 玩家档案：SteamID64、个性域名、等级、徽章、游戏库、封禁与最近游玩。
 - 隐私逐项标注：公开、仅好友可见、私密分别显示，不把受限数据伪装成无数据。
 - 玩家称号：服务端可配置 Owner、Admin 等称号，显示在 Steam 名称后。
+- **Steam 登录**：通过 Steam 官方 OpenID 2.0 登录，登录后侧边栏显示头像与昵称，一键打开自己的档案。
+- **一键启动游戏**：游戏页与卡片上直接用本机 Steam 客户端启动游戏。
+- **浏览器扩展**：在浏览器侧边栏里搜索游戏、读游戏库，并直接启动游戏。
 
 ## 两种运行方式
 
@@ -28,7 +31,10 @@ Steam 数据查询工具，包含：
 
 - 实时查询 Steam 游戏或玩家；
 - 读取最新价格、游戏库和封禁数据；
-- 使用服务端加密的 Steam Web API Key。
+- 使用服务端加密的 Steam Web API Key；
+- Steam 登录（登录依赖服务端 OpenID 回调与 Cookie 会话）。
+
+Steam 登录与浏览器扩展属于完整版功能。
 
 ### B. 完整版：Node.js 服务
 
@@ -43,6 +49,56 @@ node server.mjs
 ```text
 启动网站.bat
 ```
+
+## Steam 登录（OpenID 2.0）
+
+Steam 没有第三方 OAuth，官方登录方式是 **Steam OpenID 2.0**。本站按该协议实现：
+
+1. 点击侧边栏「Steam 登录」，服务端生成一次性 `state` 并 302 跳转到 `steamcommunity.com/openid/login`；
+2. 用户在 Steam 官方页面登录并授权；
+3. Steam 带签名回跳 `/api/auth/callback`；
+4. 服务端校验 `openid.mode`、`openid.ns`、`openid.return_to`、`openid.claimed_id`，并用 **HMAC-SHA1 按 `openid.signed` 字段顺序重算签名**做恒定时间比对；
+5. 校验通过后用 Steam Web API 拉取账号资料，写入服务端会话并下发 `HttpOnly` + `SameSite=Lax` Cookie；
+6. 前端显示头像与昵称，「退出登录」清除会话。
+
+安全要点：
+
+- 签名错误或 `return_to` 不匹配一律拒绝登录；
+- `state` 一次性、10 分钟过期，防止 CSRF 与重放；
+- 会话只保存在服务端内存中，进程重启即失效，Cookie 只含随机令牌；
+- 校验 OpenID 签名需要服务端 Web API Key；未配置 Key 时登录会明确提示不可用。
+
+接口：
+
+| 接口 | 说明 |
+| --- | --- |
+| `GET /api/auth/login` | 发起登录，跳转 Steam OpenID |
+| `GET /api/auth/callback` | 校验签名并建立会话 |
+| `GET /api/auth/session` | 读取当前登录状态 |
+| `POST /api/auth/logout` | 退出登录 |
+| `GET /api/auth/me` | 读取登录账号的完整档案 |
+
+## 启动本机 Steam 客户端
+
+网站使用 Steam 官方协议链接，可在已安装 Steam 的机器上直接拉起客户端：
+
+```text
+steam://run/<appid>      启动游戏
+steam://store/<appid>    在客户端中打开商店页
+```
+
+入口位置：游戏详情页顶部的「启动游戏」按钮、右侧精选卡片的「用 Steam 客户端启动」、以及所有游戏卡片悬停时右上角的手柄图标。未安装 Steam 客户端时浏览器会提示「未知协议」，此时改用商店网页链接即可。
+
+## 浏览器扩展
+
+`extension/` 目录下是一个 Manifest V3 扩展，提供：
+
+- **搜索**：调用 Steam 商店公开接口搜索游戏，结果可一键启动 / 打开客户端商店页 / 打开网页商店；
+- **我的库**：读取游戏库数量、总时长与最近在玩，支持 SteamID64 与个性域名；
+- **账号**：保存自己的 Steam Web API Key（仅写入本机 `chrome.storage.local`）；
+- 自动识别当前浏览器已登录的 Steam 账号。
+
+安装方式见 [extension/README.md](extension/README.md)：在 `chrome://extensions` 或 `edge://extensions` 打开开发者模式，选择「加载已解压的扩展程序」并指向 `extension/` 目录。
 
 ## 部署说明
 
@@ -62,6 +118,14 @@ steam-web/
 ├─ index.html              # 无 Node.js 静态预览 / GitHub Pages 首页
 ├─ server.mjs              # 零依赖 Node HTTP 服务 + Steam API 代理
 ├─ set-key.mjs             # 加密写入 / 更换 Steam Web API Key
+├─ extension/              # 浏览器扩展（Manifest V3）
+│  ├─ manifest.json        # 扩展清单
+│  ├─ background.js        # 后台服务：代发 Steam 请求
+│  ├─ content.js           # 侦测浏览器已登录的 Steam 账号
+│  ├─ panel.html/.css/.js  # 面板界面（弹出窗口 / 侧边栏）
+│  └─ README.md            # 安装与使用说明
+├─ test/
+│  └─ openid.test.mjs      # Steam OpenID 登录握手的端到端测试
 ├─ public/
 │  ├─ index.html           # 完整版应用页面
 │  ├─ app.js               # 完整版 SPA、搜索、比价、玩家档案
@@ -81,7 +145,16 @@ steam-web/
 | `/api/app/:id` | Steam Store `appdetails` |
 | `/api/prices/:id` | 对 16 个 `cc` 分别请求 `appdetails` |
 | `/api/profile` | Steam Web API 或 `steamcommunity.com/.../?xml=1` |
+| `/api/auth/*` | Steam OpenID 2.0 + Steam Web API 校验 |
 | 汇率估算 | `open.er-api.com`，失败时回退 `frankfurter.app` |
+
+## 测试
+
+服务启动后可运行 OpenID 登录握手的端到端测试（会本地解密 Key，仅用于签名校验，不会打印）：
+
+```bash
+node test/openid.test.mjs
+```
 
 ## 许可证
 
