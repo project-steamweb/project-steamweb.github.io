@@ -1,289 +1,79 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Steam Atlas · 蒸汽图鉴</title>
-<meta name="description" content="Steam 游戏资料、全球 16 区价格与玩家档案查询工具。项目由 AI 编写。">
-<meta name="theme-color" content="#070a0f">
-<style>
-  :root {
-    --bg: #070a0f;
-    --panel: rgba(13, 19, 27, 0.72);
-    --line: rgba(235, 245, 255, 0.075);
-    --line-strong: rgba(235, 245, 255, 0.14);
-    --text: #edf3f8;
-    --text-soft: #c2ced9;
-    --muted: #8493a4;
-    --muted-2: #5e6b7a;
-    --accent: #6ee7c8;
-    --accent-soft: rgba(110, 231, 200, 0.11);
-    --blue: #82b6ff;
-    --orange: #ffb46b;
-    --red: #ff7b87;
-    --display: "Bahnschrift SemiCondensed", "Bahnschrift", "Segoe UI Variable Display", "Segoe UI", "Noto Sans SC", "Microsoft YaHei UI", sans-serif;
-    --body: "Segoe UI Variable Text", "Segoe UI", "Noto Sans SC", "Microsoft YaHei UI", sans-serif;
-    --mono: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
-  }
-  * { box-sizing: border-box; }
-  html { -webkit-text-size-adjust: 100%; }
-  body {
-    margin: 0;
-    min-height: 100vh;
-    padding: clamp(24px, 5vw, 72px) clamp(18px, 5vw, 56px);
-    background:
-      radial-gradient(900px 520px at 12% -8%, rgba(110, 231, 200, 0.10), transparent 62%),
-      radial-gradient(760px 480px at 92% 4%, rgba(130, 182, 255, 0.09), transparent 60%),
-      var(--bg);
-    color: var(--text);
-    font-family: var(--body);
-    line-height: 1.65;
-    display: flex;
-    justify-content: center;
-  }
-  .wrap { width: 100%; max-width: 1080px; }
-
-  .eyebrow {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    padding: 5px 11px;
-    border: 1px solid rgba(110, 231, 200, 0.28);
-    border-radius: 99px;
-    background: var(--accent-soft);
-    color: var(--accent);
-    font-family: var(--mono);
-    font-size: 10px;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-  }
-  .eyebrow .dot {
-    width: 5px; height: 5px; border-radius: 50%;
-    background: var(--accent);
-    box-shadow: 0 0 8px rgba(110, 231, 200, 0.8);
-  }
-
-  h1 {
-    margin: 20px 0 0;
-    font-family: var(--display);
-    font-size: clamp(40px, 7vw, 76px);
-    font-weight: 520;
-    line-height: 1.02;
-    letter-spacing: -0.04em;
-  }
-  h1 span { color: var(--accent); }
-  .lede {
-    margin: 18px 0 0;
-    max-width: 62ch;
-    color: var(--text-soft);
-    font-size: clamp(14px, 1.6vw, 17px);
-  }
-
-  .ai-note {
-    display: flex;
-    gap: 12px;
-    margin-top: 26px;
-    padding: 15px 17px;
-    border: 1px solid rgba(255, 180, 107, 0.24);
-    border-radius: 14px;
-    background: rgba(255, 180, 107, 0.07);
-  }
-  .ai-note .mark {
-    flex: none;
-    width: 26px; height: 26px;
-    display: grid; place-items: center;
-    border-radius: 7px;
-    background: rgba(255, 180, 107, 0.14);
-    color: var(--orange);
-    font-family: var(--mono);
-    font-size: 11px;
-    font-weight: 600;
-  }
-  .ai-note b { color: #ffd0a1; font-size: 13px; font-weight: 600; }
-  .ai-note p { margin: 3px 0 0; color: var(--muted); font-size: 12.5px; }
-
-  .grid {
-    margin-top: 34px;
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(238px, 1fr));
-    gap: 12px;
-  }
-  .card {
-    padding: 16px 17px;
-    border: 1px solid var(--line);
-    border-radius: 14px;
-    background: var(--panel);
-  }
-  .card .k {
-    color: var(--muted-2);
-    font-family: var(--mono);
-    font-size: 9px;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-  }
-  .card h2 {
-    margin: 7px 0 0;
-    font-family: var(--display);
-    font-size: 18px;
-    font-weight: 520;
-    letter-spacing: -0.01em;
-  }
-  .card p { margin: 6px 0 0; color: var(--muted); font-size: 12.5px; }
-
-  .deploy {
-    margin-top: 16px;
-    padding: 18px 19px;
-    border: 1px solid var(--line-strong);
-    border-radius: 14px;
-    background: rgba(13, 19, 27, 0.9);
-  }
-  .deploy h2 {
-    margin: 0;
-    font-family: var(--display);
-    font-size: 20px;
-    font-weight: 520;
-  }
-  .deploy p { margin: 8px 0 0; color: var(--muted); font-size: 13px; }
-  .deploy ul { margin: 10px 0 0; padding-left: 19px; color: var(--muted); font-size: 12.5px; }
-  .deploy li { margin-top: 4px; }
-  .deploy li b { color: var(--text-soft); font-weight: 600; }
-  code {
-    padding: 1px 5px;
-    border: 1px solid var(--line);
-    border-radius: 5px;
-    background: rgba(255, 255, 255, 0.04);
-    color: var(--accent);
-    font-family: var(--mono);
-    font-size: 0.9em;
-  }
-  pre {
-    margin: 12px 0 0;
-    padding: 12px 14px;
-    overflow-x: auto;
-    border: 1px solid var(--line);
-    border-radius: 10px;
-    background: rgba(4, 7, 11, 0.8);
-    color: var(--text-soft);
-    font-family: var(--mono);
-    font-size: 12px;
-    line-height: 1.6;
-  }
-  pre .c { color: var(--muted-2); }
-
-  .actions { margin-top: 22px; display: flex; flex-wrap: wrap; gap: 10px; }
-  .btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    padding: 11px 18px;
-    border: 1px solid var(--line-strong);
-    border-radius: 10px;
-    color: var(--text-soft);
-    font-size: 13px;
-    text-decoration: none;
-    transition: border-color 180ms ease, background 180ms ease, color 180ms ease;
-  }
-  .btn:hover { border-color: rgba(235, 245, 255, 0.3); background: rgba(255, 255, 255, 0.05); color: var(--text); }
-  .btn.primary {
-    border-color: rgba(110, 231, 200, 0.35);
-    background: var(--accent-soft);
-    color: var(--accent);
-  }
-  .btn.primary:hover { background: rgba(110, 231, 200, 0.18); }
-
-  footer {
-    margin-top: 42px;
-    padding-top: 18px;
-    border-top: 1px solid var(--line);
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px 20px;
-    color: var(--muted-2);
-    font-family: var(--mono);
-    font-size: 10px;
-  }
-  footer a { color: var(--muted); text-decoration: none; }
-  footer a:hover { color: var(--accent); }
-
-  @media (max-width: 560px) {
-    body { padding: 26px 16px 40px; }
-    h1 { font-size: clamp(34px, 11vw, 46px); }
-    .card h2 { font-size: 16.5px; }
-  }
-</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#080d12">
+  <meta name="description" content="Steam Atlas 静态预览版：Steam 游戏资料、全球区服价格与玩家档案。">
+  <title>Steam Atlas · 蒸汽图鉴（静态预览）</title>
+  <style>
+    :root{--bg:#080d12;--panel:#101820;--panel2:#151f29;--line:#22303b;--text:#eff5f8;--muted:#8999a8;--sub:#5d6c79;--mint:#6ee7c8;--mint2:#b0f6e5;--blue:#82b6ff;--orange:#ffb46b;--red:#ff6f7e;--display:"Bahnschrift SemiCondensed","Segoe UI Variable Display","Segoe UI","Microsoft YaHei",sans-serif;--body:"Segoe UI Variable Text","Segoe UI","Microsoft YaHei",sans-serif;--mono:"Cascadia Mono",Consolas,monospace}
+    *{box-sizing:border-box}html{background:var(--bg);-webkit-text-size-adjust:100%}body{margin:0;min-height:100vh;background:linear-gradient(135deg,#091118 0%,#080d12 52%,#0d131a 100%);color:var(--text);font:14px/1.6 var(--body)}button,input{font:inherit}button{cursor:pointer}a{color:inherit;text-decoration:none}
+    .app{display:grid;grid-template-columns:240px minmax(0,1fr);min-height:100vh}.sidebar{position:sticky;top:0;height:100vh;padding:24px 16px 18px;border-right:1px solid var(--line);background:rgba(9,14,20,.84);display:flex;flex-direction:column}.brand{display:flex;align-items:center;gap:10px;padding:4px 10px 28px}.brand-mark{width:28px;height:28px;border:1px solid rgba(110,231,200,.6);border-radius:8px;display:grid;place-items:center;color:var(--mint);font:700 11px var(--mono);box-shadow:0 0 20px rgba(110,231,200,.08)}.brand strong{display:block;font:600 16px var(--display);letter-spacing:.02em}.brand small{display:block;color:var(--sub);font:9px var(--mono);letter-spacing:.12em;text-transform:uppercase}.nav-label{padding:0 12px 8px;color:var(--sub);font:9px var(--mono);letter-spacing:.14em}.nav{display:grid;gap:5px}.nav button{width:100%;padding:11px 12px;border:1px solid transparent;border-radius:9px;background:transparent;color:var(--muted);text-align:left;display:flex;align-items:center;gap:10px}.nav button:hover{background:#121c25;color:var(--text)}.nav button.active{border-color:rgba(110,231,200,.22);background:rgba(110,231,200,.09);color:var(--mint2)}.nav-icon{width:18px;text-align:center;font:11px var(--mono);opacity:.85}.sidebar-bottom{margin-top:auto}.preview-status{padding:12px;border:1px solid rgba(255,180,107,.22);border-radius:10px;background:rgba(255,180,107,.06);color:var(--muted);font-size:11px}.preview-status b{display:block;color:var(--orange);font-size:11px}.preview-status span{display:block;margin-top:3px;line-height:1.5}.side-foot{margin-top:14px;color:var(--sub);font:9px var(--mono);text-align:center}
+    .main{min-width:0}.topbar{height:72px;padding:0 clamp(18px,4vw,48px);border-bottom:1px solid var(--line);display:flex;align-items:center;gap:18px}.mobile-brand{display:none}.search{flex:1;position:relative}.search input{width:100%;padding:11px 14px 11px 38px;border:1px solid var(--line);border-radius:9px;outline:0;background:#0d151d;color:var(--text)}.search input:focus{border-color:rgba(110,231,200,.5)}.search-icon{position:absolute;left:14px;top:10px;color:var(--sub);font:14px var(--mono)}.top-meta{display:flex;align-items:center;gap:10px;color:var(--sub);font:9px var(--mono);white-space:nowrap}.live-dot{width:6px;height:6px;border-radius:50%;background:var(--mint);box-shadow:0 0 8px var(--mint)}.content{max-width:1370px;margin:auto;padding:clamp(24px,4vw,48px)}.view{display:none}.view.active{display:block}.view-head{display:flex;justify-content:space-between;gap:20px;align-items:end;margin-bottom:25px}.eyebrow{color:var(--mint);font:10px var(--mono);letter-spacing:.16em}.view-head h1{margin:7px 0 0;font:520 clamp(32px,4vw,52px)/1 var(--display);letter-spacing:-.035em}.view-head p{max-width:520px;margin:10px 0 0;color:var(--muted)}.head-tag{padding:6px 9px;border:1px solid var(--line);border-radius:6px;color:var(--sub);font:9px var(--mono);white-space:nowrap}
+    .hero{position:relative;min-height:310px;overflow:hidden;border:1px solid var(--line);border-radius:14px;background:#111b24}.hero-img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.38}.hero:after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,#0b1219 5%,rgba(11,18,25,.78) 44%,rgba(11,18,25,.15) 100%)}.hero-copy{position:relative;z-index:1;max-width:600px;padding:42px}.badge{display:inline-flex;padding:4px 8px;border:1px solid var(--line);border-radius:5px;color:var(--muted);font:9px var(--mono);letter-spacing:.06em}.badge.mint{border-color:rgba(110,231,200,.35);background:rgba(110,231,200,.1);color:var(--mint)}.badge.orange{border-color:rgba(255,180,107,.35);background:rgba(255,180,107,.1);color:var(--orange)}.hero h2{margin:12px 0 5px;font:520 clamp(30px,4vw,48px)/1.03 var(--display);letter-spacing:-.04em}.hero p{max-width:520px;color:#b7c6d0}.actions{display:flex;flex-wrap:wrap;gap:9px;margin-top:22px}.btn{padding:9px 13px;border:1px solid var(--line-strong);border-radius:7px;background:#121c25;color:var(--text-soft);font-size:12px}.btn:hover{border-color:rgba(110,231,200,.45);color:var(--mint2)}.btn.primary{border-color:rgba(110,231,200,.35);background:rgba(110,231,200,.13);color:var(--mint2)}
+    .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:18px}.panel{border:1px solid var(--line);border-radius:12px;background:rgba(16,24,32,.8);padding:18px}.panel h3{margin:0;color:var(--sub);font:9px var(--mono);letter-spacing:.12em}.stat{margin-top:14px;font:520 26px var(--display)}.stat small{color:var(--muted);font:11px var(--body)}.panel p{margin:6px 0 0;color:var(--muted);font-size:12px}.section{margin-top:18px}.section-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:11px}.section-head h2{margin:0;font:520 21px var(--display)}.section-head span{color:var(--sub);font:9px var(--mono)}
+    .price-table{width:100%;border-collapse:collapse}.price-table th{padding:9px 10px;border-bottom:1px solid var(--line);color:var(--sub);font:9px var(--mono);font-weight:400;text-align:left}.price-table td{padding:11px 10px;border-bottom:1px solid rgba(255,255,255,.045);color:var(--text-soft);font-size:12px}.price-table tr:last-child td{border-bottom:0}.price-table tr:hover td{background:rgba(255,255,255,.025)}.region{display:flex;align-items:center;gap:9px}.code{width:27px;height:27px;display:grid;place-items:center;border:1px solid var(--line);border-radius:7px;color:var(--mint);font:8px var(--mono)}.region b{display:block;font-weight:500}.region small{display:block;color:var(--sub);font:9px var(--mono)}.price{font:13px var(--mono);color:var(--text)}.price-note{color:var(--orange);font-size:9px}.discount{color:var(--mint);font:10px var(--mono)}
+    .game-layout{display:grid;grid-template-columns:minmax(0,1fr) 280px;gap:18px}.game-title{display:flex;gap:14px;align-items:start}.game-title img{width:112px;height:52px;object-fit:cover;border-radius:7px;border:1px solid var(--line)}.game-title h2{margin:0;font:520 31px/1.12 var(--display)}.detail-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:9px;margin-top:17px}.detail{padding:12px;border:1px solid var(--line);border-radius:8px;background:rgba(255,255,255,.018)}.detail label{display:block;color:var(--sub);font:8px var(--mono);letter-spacing:.1em}.detail b{display:block;margin-top:5px;color:var(--text-soft);font-size:13px;font-weight:500}.chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:14px}.chip{padding:4px 7px;border:1px solid var(--line);border-radius:5px;color:var(--muted);font-size:10px}.achievement-list{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}.achievement{display:flex;gap:9px;align-items:center;padding:9px;border:1px solid var(--line);border-radius:8px}.achievement img{width:35px;height:35px;border-radius:5px}.achievement b{display:block;font-size:10px;font-weight:500}.achievement small{display:block;color:var(--sub);font-size:9px}.req{margin-top:10px;padding:11px;border-left:2px solid rgba(110,231,200,.35);background:rgba(255,255,255,.02);color:var(--muted);font-size:11px}.req b{display:block;color:var(--mint);font:9px var(--mono);margin-bottom:4px}
+    .profile-hero{display:grid;grid-template-columns:auto 1fr auto;gap:17px;align-items:center;padding:24px;border:1px solid var(--line);border-radius:13px;background:linear-gradient(120deg,#121e27,#10171f)}.avatar{width:88px;height:88px;border-radius:14px;border:1px solid rgba(110,231,200,.35);object-fit:cover}.profile-hero h2{margin:0;font:520 31px var(--display)}.profile-hero p{margin:4px 0;color:var(--muted);font-size:12px}.title{display:inline-block;margin-left:8px;padding:3px 7px;border:1px solid rgba(255,92,114,.48);border-radius:4px;background:rgba(176,18,42,.28);color:#ff7182;font:600 9px var(--mono);letter-spacing:.08em;vertical-align:middle}.privacy{display:flex;align-items:center;gap:7px;margin-top:9px;color:var(--orange);font:9px var(--mono)}.profile-stats{display:grid;grid-template-columns:repeat(4,1fr);margin-top:14px}.profile-stat{padding:14px 16px;border-right:1px solid var(--line)}.profile-stat:last-child{border:0}.profile-stat label{display:block;color:var(--sub);font:8px var(--mono)}.profile-stat b{display:block;margin-top:5px;font:520 22px var(--display)}.identity{display:grid;gap:0}.identity-row{display:grid;grid-template-columns:130px 1fr auto;gap:12px;align-items:center;padding:10px 0;border-bottom:1px solid rgba(255,255,255,.05);font-size:11px}.identity-row:last-child{border-bottom:0}.identity-row span{color:var(--muted)}.identity-row b{font-weight:400;color:var(--text-soft);text-align:right}.private{padding:3px 7px;border:1px solid rgba(255,180,107,.28);border-radius:5px;color:var(--orange);font:8px var(--mono)}
+    .empty{padding:54px 22px;text-align:center;border:1px dashed var(--line-strong);border-radius:12px;color:var(--muted)}.empty strong{display:block;color:var(--text-soft);font:520 22px var(--display)}.empty p{max-width:430px;margin:7px auto 0}.toast{position:fixed;right:20px;bottom:20px;padding:11px 14px;border:1px solid rgba(110,231,200,.35);border-radius:8px;background:#14231f;color:var(--mint2);font-size:12px;opacity:0;transform:translateY(8px);pointer-events:none;transition:.2s}.toast.show{opacity:1;transform:none}.mobile-nav{display:none}
+    @media(max-width:900px){.app{grid-template-columns:76px 1fr}.sidebar{padding:18px 10px}.brand{justify-content:center;padding:4px 0 26px}.brand strong,.brand small,.nav-label,.side-foot,.preview-status{display:none}.nav button{justify-content:center;padding:12px}.nav button span:last-child{display:none}.game-layout{grid-template-columns:1fr}.profile-hero{grid-template-columns:auto 1fr}.profile-hero .btn{grid-column:1/-1}.profile-stats{grid-template-columns:repeat(2,1fr)}.profile-stat:nth-child(2){border:0}}
+    @media(max-width:620px){.app{display:block}.sidebar{display:none}.topbar{height:62px;padding:0 14px}.mobile-brand{display:block;font:600 14px var(--display);white-space:nowrap}.top-meta{display:none}.content{padding:24px 14px 42px}.view-head{display:block}.head-tag{display:inline-block;margin-top:12px}.hero-copy{padding:27px 22px}.hero{min-height:400px}.grid{grid-template-columns:1fr}.detail-grid,.achievement-list{grid-template-columns:1fr}.price-table th:nth-child(3),.price-table td:nth-child(3){display:none}.price-table td{padding:9px 5px}.profile-hero{grid-template-columns:auto 1fr;gap:11px;padding:17px}.avatar{width:64px;height:64px}.profile-hero h2{font-size:23px}.profile-stats{grid-template-columns:repeat(2,1fr)}.identity-row{grid-template-columns:95px 1fr auto}.mobile-nav{position:fixed;z-index:5;bottom:0;left:0;right:0;display:grid;grid-template-columns:repeat(3,1fr);padding:7px;background:#0c141c;border-top:1px solid var(--line)}.mobile-nav button{border:0;background:transparent;color:var(--muted);font-size:10px}.mobile-nav button.active{color:var(--mint)}}
+  </style>
 </head>
 <body>
-  <main class="wrap">
-    <span class="eyebrow"><span class="dot"></span>Steam Data Explorer</span>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand"><div class="brand-mark">SA</div><div><strong>Steam Atlas</strong><small>蒸汽图鉴</small></div></div>
+      <div class="nav-label">WORKSPACE</div>
+      <nav class="nav" aria-label="主导航">
+        <button class="active" data-view="overview"><span class="nav-icon">01</span><span>探索总览</span></button>
+        <button data-view="game"><span class="nav-icon">02</span><span>游戏资料</span></button>
+        <button data-view="prices"><span class="nav-icon">03</span><span>全球区价</span></button>
+        <button data-view="profile"><span class="nav-icon">04</span><span>玩家档案</span></button>
+      </nav>
+      <div class="sidebar-bottom"><div class="preview-status"><b>STATIC PREVIEW</b><span>无需 Node.js · 演示数据</span></div><div class="side-foot">AI WRITTEN · v2.0</div></div>
+    </aside>
+    <main class="main">
+      <header class="topbar"><div class="mobile-brand">Steam Atlas</div><div class="search"><span class="search-icon">⌕</span><input id="search" placeholder="搜索游戏或 SteamID（预览版）" autocomplete="off"></div><div class="top-meta"><span class="live-dot"></span>静态预览模式</div></header>
+      <div class="content">
+        <section class="view active" id="overview">
+          <div class="view-head"><div><div class="eyebrow">STEAM DATA EXPLORER</div><h1>蒸汽图鉴</h1><p>游戏资料、全球区服价格与玩家档案，在一个安静而清晰的工作台里。</p></div><span class="head-tag">STATIC · NO NODE.JS</span></div>
+          <div class="hero"><img class="hero-img" src="https://cdn.akamai.steamstatic.com/steam/apps/1245620/page_bg_generated_v6b.jpg" alt="艾尔登法环背景"><div class="hero-copy"><span class="badge mint">FEATURED GAME · 1245620</span><h2>艾尔登法环</h2><p>在交界地展开冒险。此页面使用演示数据，展示完整版应用可提供的游戏信息、全球价格和详细资料结构。</p><div class="actions"><button class="btn primary" data-go="game">查看游戏资料</button><button class="btn" data-go="prices">查看 16 区价格</button></div></div></div>
+          <div class="grid"><div class="panel"><h3>游戏资料</h3><div class="stat">42 <small>项成就</small></div><p>配置要求、DLC、宣传片、发行版本与分级信息。</p></div><div class="panel"><h3>全球区价</h3><div class="stat">16 <small>个区服</small></div><p>显示实际商店计价货币，避免 TRY / ARS 误读。</p></div><div class="panel"><h3>玩家档案</h3><div class="stat">12 <small>级 Steam</small></div><p>等级、徽章、隐私字段和游戏库状态一目了然。</p></div></div>
+          <div class="section panel"><div class="section-head"><h2>预览说明</h2><span>READ ME FIRST</span></div><p>这是无需 Node.js 的可交互静态预览版。它不会访问 Steam API，不会读取个人资料，也不会暴露服务端 Key。切换左侧视图体验界面，使用顶部搜索可快速定位演示内容。</p></div>
+        </section>
 
-    <h1>Steam Atlas<br><span>蒸汽图鉴</span></h1>
-    <p class="lede">
-      查询 Steam 游戏资料、全球 16 个区服的本地定价，以及玩家的公开档案与隐私状态。
-      中文界面，深色响应式设计，零第三方依赖。
-    </p>
+        <section class="view" id="game">
+          <div class="view-head"><div><div class="eyebrow">GAME INTELLIGENCE</div><h1>游戏资料</h1><p>把商店页拆成可扫描的信息模块。</p></div><span class="head-tag">DEMO APP · 1245620</span></div>
+          <div class="game-layout"><div><div class="panel"><div class="game-title"><img src="https://cdn.akamai.steamstatic.com/steam/apps/1245620/header.jpg" alt="艾尔登法环"><div><span class="badge mint">GAME</span><h2>艾尔登法环</h2><p>FromSoftware · Bandai Namco Entertainment</p></div></div><div class="chips"><span class="chip">动作</span><span class="chip">角色扮演</span><span class="chip">开放世界</span><span class="chip">Windows</span><span class="chip">Steam 成就</span></div><div class="detail-grid"><div class="detail"><label>发行日期</label><b>2022 年 2 月 25 日</b></div><div class="detail"><label>Steam 评价</label><b>684,231 条 · 极度好评</b></div><div class="detail"><label>发行版本</label><b>标准版 / 豪华版</b></div><div class="detail"><label>支持语言</label><b>15 种语言</b></div><div class="detail"><label>年龄分级</label><b>ESRB M · PEGI 16</b></div><div class="detail"><label>内容提示</label><b>频繁暴力或血腥 · 赌博内容</b></div></div></div><div class="section panel"><div class="section-head"><h2>精选成就</h2><span>6 / 42</span></div><div class="achievement-list"><div class="achievement"><img src="https://cdn.akamai.steamstatic.com/steamcommunity/public/images/apps/1245620/2c4a4b7b4bb2f55b8d17a5f7702f9c7d6f98b1ad.jpg" alt=""><span><b>艾尔登之王</b><small>获得艾尔登之王结局</small></span></div><div class="achievement"><img src="https://cdn.akamai.steamstatic.com/steamcommunity/public/images/apps/1245620/5d4e6b3a3a55b0a2d4cda6e9a5ef1d0a2f4d6a4f.jpg" alt=""><span><b>碎片君王</b><small>击败所有碎片君王</small></span></div><div class="achievement"><img src="https://cdn.akamai.steamstatic.com/steamcommunity/public/images/apps/1245620/ed6f4d3d1f08a7b8c9c8d8dce05a9b0d2e4a6a1e.jpg" alt=""><span><b>传奇武器</b><small>获得所有传奇武器</small></span></div><div class="achievement"><img src="https://cdn.akamai.steamstatic.com/steamcommunity/public/images/apps/1245620/ba4f9e8a20d0a2d6ce4f8e0e2b1f4e2f9c1b4c0a.jpg" alt=""><span><b>黄金树</b><small>抵达黄金树脚下</small></span></div></div></div><div class="section panel"><div class="section-head"><h2>配置要求</h2><span>REQUIREMENTS</span></div><div class="req"><b>WINDOWS · MINIMUM</b>操作系统 Windows 10 · 处理器 Intel Core i5-8400 / AMD Ryzen 3 3300X · 内存 12 GB · 显卡 GTX 1060 3GB / RX 580 4GB</div><div class="req"><b>WINDOWS · RECOMMENDED</b>操作系统 Windows 10 / 11 · 处理器 Intel Core i7-8700K / AMD Ryzen 5 3600X · 内存 16 GB · 显卡 GTX 1070 8GB / RX Vega 56 8GB</div></div></div><aside><div class="panel"><h3>AT A GLANCE</h3><div class="identity"><div class="identity-row"><span>当前区服</span><b>中国</b><span class="private">CNY</span></div><div class="identity-row"><span>当前价格</span><b>¥298.00</b><span class="private">-</span></div><div class="identity-row"><span>Metacritic</span><b>96</b><span class="private">媒体</span></div><div class="identity-row"><span>DLC</span><b>3 个</b><span class="private">内容</span></div></div></div><div class="section panel"><h3>预览数据</h3><p>图片使用 Steam 公共 CDN。文字与价格为演示数据，不代表当前商店实际状态。</p></div></aside></div>
+        </section>
 
-    <div class="ai-note">
-      <span class="mark">AI</span>
-      <div>
-        <b>本项目由 AI 编写</b>
-        <p>
-          代码、页面、样式与文档均由 AI（DeepSeek 驱动的编码助手）根据需求生成并迭代完成，人工仅提出需求与反馈。
-          使用或二次开发前请自行 Review 代码。
-        </p>
+        <section class="view" id="prices">
+          <div class="view-head"><div><div class="eyebrow">REGIONAL PRICING</div><h1>全球区价</h1><p>同一款游戏，在 16 个区服的价格与实际计价货币。</p></div><span class="head-tag">CNY ESTIMATE · DEMO</span></div>
+          <div class="panel"><div class="section-head"><h2>艾尔登法环 · 1245620</h2><span>更新于刚刚 · 演示数据</span></div><div style="overflow:auto"><table class="price-table"><thead><tr><th>区域</th><th>商店价格</th><th>人民币估算</th><th>状态</th></tr></thead><tbody id="priceRows"></tbody></table></div></div>
+          <div class="section grid"><div class="panel"><h3>计价说明</h3><div class="stat" style="font-size:20px">USD / TRY</div><p>土耳其与阿根廷示例中，商店实际使用 USD 计价，会明确标注。</p></div><div class="panel"><h3>估算汇率</h3><div class="stat" style="font-size:20px">公开汇率</div><p>人民币金额仅用于横向比较，实际结算以 Steam 商店为准。</p></div><div class="panel"><h3>演示切换</h3><div class="stat" style="font-size:20px">CN · CNY</div><p>点击任意区域行可将其设为当前区服。</p></div></div>
+        </section>
+
+        <section class="view" id="profile">
+          <div class="view-head"><div><div class="eyebrow">PLAYER PROFILE</div><h1>玩家档案</h1><p>公开字段与 Steam 隐私设置分开呈现。</p></div><span class="head-tag">DEMO STEAMID · 76561199473775554</span></div>
+          <div class="profile-hero"><img class="avatar" src="https://avatars.akamai.steamstatic.com/7c7c8f4c2b3e2b4e3f7e5a5a3e1d9b8b8f9e1c9f_full.jpg" alt="玩家头像"><div><span class="badge mint">WEB API DEMO</span><h2>wamgzicheng165 <span class="title">OWNER</span></h2><p>SteamID64 · 76561199473775554</p><div class="privacy">● 档案公开 · 游戏详情为私密</div></div><button class="btn primary" data-go="overview">返回总览</button></div>
+          <div class="panel profile-stats"><div class="profile-stat"><label>STEAM LEVEL</label><b>12</b></div><div class="profile-stat"><label>徽章</label><b>4 <small>枚</small></b></div><div class="profile-stat"><label>游戏库</label><b>私密</b></div><div class="profile-stat"><label>地区</label><b>公开</b></div></div>
+          <div class="section game-layout"><div class="panel"><div class="section-head"><h2>隐私设置</h2><span>PRIVACY · 4 RESTRICTED</span></div><div class="identity"><div class="identity-row"><span>个人资料页</span><b>Steam 公开显示</b><span class="badge mint">公开</span></div><div class="identity-row"><span>个人资料详情</span><b>官方 API 可读</b><span class="badge mint">公开</span></div><div class="identity-row"><span>游戏库 / 游戏时长</span><b>Steam 隐私设置限制</b><span class="private">私密</span></div><div class="identity-row"><span>真实姓名 / 地区</span><b>未填写或未公开</b><span class="private">私密</span></div><div class="identity-row"><span>最近在线</span><b>Steam 隐私设置限制</b><span class="private">私密</span></div><div class="identity-row"><span>公开群组</span><b>Steam 隐私设置限制</b><span class="private">私密</span></div></div><p style="margin-top:16px">标为「私密」的项目由玩家在 Steam 隐私设置中关闭，静态预览会保留这个状态提示。</p></div><aside><div class="panel"><h3>ACCOUNT STANDING</h3><div class="identity"><div class="identity-row"><span>VAC 封禁</span><b>0</b><span class="badge mint">正常</span></div><div class="identity-row"><span>社区封禁</span><b>否</b><span class="badge mint">正常</span></div><div class="identity-row"><span>交易限制</span><b>否</b><span class="badge mint">正常</span></div></div></div></aside></div>
+        </section>
       </div>
-    </div>
-
-    <div class="grid">
-      <div class="card">
-        <div class="k">Store</div>
-        <h2>游戏资料</h2>
-        <p>简介、截图、宣传片、成就、DLC、发售版本、配置要求、年龄分级与版权信息。</p>
-      </div>
-      <div class="card">
-        <div class="k">Pricing</div>
-        <h2>全球 16 区价格</h2>
-        <p>一次读取各区本地定价，按公开汇率估算人民币并横向排序，标注非本地货币计价。</p>
-      </div>
-      <div class="card">
-        <div class="k">Profile</div>
-        <h2>玩家档案</h2>
-        <p>支持 SteamID64、个性域名与主页链接，展示等级、徽章、游戏库、封禁与最近游玩。</p>
-      </div>
-      <div class="card">
-        <div class="k">Privacy</div>
-        <h2>隐私逐项标注</h2>
-        <p>游戏库、时长、地区、最近在线等逐项标明公开 / 仅好友 / 私密，不把限制伪装成无数据。</p>
-      </div>
-    </div>
-
-    <section class="deploy">
-      <h2>这个页面只是仓库首页</h2>
-      <p>
-        完整功能需要 Node.js 后端：Steam 商店与社区接口不返回 CORS 头，且 Web API Key 只能在服务端使用，
-        因此 <b>GitHub Pages 无法运行本站的 API 代理</b>。
-      </p>
-      <pre><span class="c"># 克隆后本地运行（需要 Node.js 20+）</span>
-git clone https://github.com/project-steamweb/project-steamweb.github.io.git
-cd project-steamweb.github.io
-node server.mjs
-<span class="c"># 然后访问 http://127.0.0.1:8787</span></pre>
-      <ul>
-        <li><b>本地运行</b>：最简单，仅自己使用。</li>
-        <li><b>Node 托管平台</b>：Render / Railway / Fly.io / VPS 运行 <code>node server.mjs</code>。</li>
-        <li><b>前后端分离</b>：后端部署到上述平台，前端静态托管到 Pages。</li>
-      </ul>
-    </section>
-
-    <div class="actions">
-      <a class="btn primary" href="https://github.com/project-steamweb/project-steamweb.github.io">查看源码仓库</a>
-      <a class="btn" href="https://github.com/project-steamweb/project-steamweb.github.io#readme">部署说明</a>
-    </div>
-
-    <footer>
-      <span>Steam Atlas · v1.0.9</span>
-      <span>非 Valve / Steam 官方产品</span>
-      <span>由 AI 编写</span>
-    </footer>
-  </main>
+    </main>
+  </div>
+  <nav class="mobile-nav"><button class="active" data-view="overview">总览</button><button data-view="prices">区价</button><button data-view="profile">档案</button></nav>
+  <div class="toast" id="toast"></div>
+  <script>
+    const prices=[['CN','中国','CNY','¥298.00','¥298'],['HK','中国香港','HKD','HK$298.00','¥274'],['US','美国','USD','$59.99','¥431'],['JP','日本','JPY','¥8,800','¥402'],['KR','韩国','KRW','₩64,800','¥341'],['GB','英国','GBP','£49.99','¥468'],['EU','欧元区','EUR','€59.99','¥467'],['CA','加拿大','CAD','$79.99','¥424'],['AU','澳大利亚','AUD','$99.95','¥478'],['BR','巴西','BRL','R$299.90','¥401'],['MX','墨西哥','MXN','$1,199.00','¥437'],['TR','土耳其','USD','$59.99','¥431'],['AR','阿根廷','USD','$59.99','¥431'],['SG','新加坡','SGD','$79.90','¥427'],['TW','中国台湾','TWD','NT$1,790','¥401'],['RU','俄罗斯','USD','$59.99','¥431']];
+    const priceRows=document.getElementById('priceRows');priceRows.innerHTML=prices.map((p,i)=>`<tr data-region="${p[0]}"><td><div class="region"><span class="code">${p[0]}</span><span><b>${p[1]}</b><small>${p[2]} · ${p[2]==='USD'&&p[0]!=='US'?'商店以 USD 计价':'本地计价'}</small></span></div></td><td class="price">${p[3]}</td><td class="price">${p[4]}</td><td>${i===0?'<span class="discount">当前区服</span>':p[2]==='USD'&&p[0]!=='US'?'<span class="price-note">非本地货币</span>':'—'}</td></tr>`).join('');
+    const toast=document.getElementById('toast');function showToast(text){toast.textContent=text;toast.classList.add('show');clearTimeout(window.__toast);window.__toast=setTimeout(()=>toast.classList.remove('show'),2200)}
+    function go(view){document.querySelectorAll('.view').forEach(v=>v.classList.toggle('active',v.id===view));document.querySelectorAll('[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===view));window.scrollTo({top:0,behavior:'smooth'});history.replaceState(null,'','#'+view)}
+    document.addEventListener('click',e=>{const b=e.target.closest('[data-view],[data-go]');if(b){e.preventDefault();go(b.dataset.view||b.dataset.go)}const row=e.target.closest('#priceRows tr');if(row)showToast(`已选择 ${row.dataset.region} 区服（静态预览）`)})
+    document.getElementById('search').addEventListener('keydown',e=>{if(e.key==='Enter'){const q=e.target.value.trim();if(!q)return;const view=/765611|gabe|steam/i.test(q)?'profile':'game';go(view);showToast(`预览模式：已打开演示${view==='profile'?'档案':'游戏'}，未调用 Steam API`)}})
+    const hash=location.hash.slice(1);if(['overview','game','prices','profile'].includes(hash))go(hash);
+  </script>
 </body>
 </html>
