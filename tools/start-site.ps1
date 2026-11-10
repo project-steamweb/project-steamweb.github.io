@@ -1,9 +1,15 @@
-﻿$ErrorActionPreference = 'Continue'
-$root = Split-Path $PSScriptRoot -Parent
+$ErrorActionPreference = 'Continue'
+# Node 输出是 UTF-8，这里统一按 UTF-8 解码再写日志，避免日志里出现乱码
+try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
+$OutputEncoding = [Text.Encoding]::UTF8
+# 根目录优先从环境变量取（启动器会显式按 UTF-8 读取本文件，这样不依赖 BOM）
+$root = if ($env:STEAM_ATLAS_HOME) { $env:STEAM_ATLAS_HOME.TrimEnd('\') } else { Split-Path $PSScriptRoot -Parent }
 Set-Location -Path $root
 
+$port = if ($env:PORT) { $env:PORT } else { '8787' }
 $logDir = Join-Path $root 'logs'
 $logFile = Join-Path $logDir 'server.log'
+$errFile = Join-Path $logDir 'server.err.log'
 $startLog = Join-Path $logDir 'startup.log'
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 
@@ -15,9 +21,9 @@ function Write-Log($text) {
 Write-Log '--- 启动服务 ---'
 
 # 已经在跑就别再起一份
-$busy = Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue
+$busy = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
 if ($busy) {
-  Write-Log '端口 8787 已被占用，服务可能已经在运行，本次启动跳过。'
+  Write-Log "端口 $port 已被占用，服务可能已经在运行，本次启动跳过。"
   exit 0
 }
 
@@ -39,9 +45,10 @@ if (-not $node) {
 Write-Log "使用 Node: $node"
 
 # 服务起来之后再打开浏览器
-Start-Process powershell -WindowStyle Hidden -Command "Start-Sleep -Seconds 3; Start-Process 'http://127.0.0.1:8787'"
+Start-Process powershell -WindowStyle Hidden -Command "Start-Sleep -Seconds 3; Start-Process 'http://127.0.0.1:$port'"
 
-# 服务在后台跑，日志写到 logs\server.log，窗口不显示
-Start-Process -FilePath $node -ArgumentList 'server.mjs' -WorkingDirectory $root -WindowStyle Hidden `
-  -RedirectStandardOutput $logFile -RedirectStandardError (Join-Path $logDir 'server.err.log')
-Write-Log '服务已在后台启动，窗口已隐藏。'
+# 这个 PowerShell 会一直托管 node 进程：窗口是隐藏的，但它会跟着服务一直活着。
+# 停止服务请运行项目根目录的 停止服务.cmd（它按端口结束进程）。
+Write-Log '服务已启动（窗口隐藏，日志见 logs\server.log）。停止服务请运行 停止服务.cmd。'
+& $node server.mjs 2>&1 | Out-File -FilePath $logFile -Append -Encoding utf8
+Write-Log '服务已退出。'
