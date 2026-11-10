@@ -84,7 +84,7 @@ export function saveAppIndex(state) {
 export class AppIndex {
   constructor() {
     this.entries = new Map();   // appid -> { n, t, d }
-    this.lower = new Map();     // 小写名称 -> appid
+    this.names = [];            // [小写名称, appid]，检索时免去重复小写化
     this.next = 1;
     this.loaded = false;
   }
@@ -93,7 +93,7 @@ export class AppIndex {
     const state = loadAppIndex();
     this.next = state.next;
     this.entries.clear();
-    this.lower.clear();
+    this.names.length = 0;
     for (const [appid, value] of Object.entries(state.entries)) {
       this.set(Number(appid), value);
     }
@@ -105,7 +105,7 @@ export class AppIndex {
     const id = Number(appid);
     if (!Number.isInteger(id) || id <= 0 || !value?.n) return;
     this.entries.set(id, value);
-    this.lower.set(value.n.toLowerCase(), id);
+    this.names.push([value.n.toLowerCase(), id]);
   }
 
   get size() {
@@ -113,7 +113,8 @@ export class AppIndex {
   }
 
   /**
-   * 按名称检索：完全匹配优先，其次前缀匹配，最后包含匹配。
+   * 按名称检索：完全匹配优先，其次前缀匹配，最后包含匹配；
+   * 同一档里游戏排在原声带 / DLC 前面。
    */
   search(query, limit = 12) {
     const term = String(query || '').trim().toLowerCase();
@@ -121,12 +122,20 @@ export class AppIndex {
     const exact = [];
     const prefix = [];
     const contains = [];
-    for (const [id, value] of this.entries) {
-      const name = value.n.toLowerCase();
+    for (const [name, id] of this.names) {
       if (name === term) exact.push(id);
       else if (name.startsWith(term)) prefix.push(id);
       else if (name.includes(term)) contains.push(id);
     }
+    const byKind = (a, b) => {
+      const ta = this.entries.get(a)?.t;
+      const tb = this.entries.get(b)?.t;
+      if (ta === tb) return a - b;
+      return ta === 'g' ? -1 : tb === 'g' ? 1 : a - b;
+    };
+    exact.sort(byKind);
+    prefix.sort(byKind);
+    contains.sort(byKind);
     const order = [...exact, ...prefix, ...contains].slice(0, limit);
     return order.map((id) => ({ appid: id, ...this.entries.get(id) }));
   }
