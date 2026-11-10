@@ -12,7 +12,9 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 
 // Optional .env support so `node server.mjs` is enough.
 const envFile = path.join(__dirname, '.env');
-if (existsSync(envFile)) {
+function loadEnvFile({ override = false } = {}) {
+  if (!existsSync(envFile)) return {};
+  const loaded = {};
   for (const rawLine of readFileSync(envFile, 'utf8').split(/\r?\n/)) {
     const line = rawLine.trim();
     if (!line || line.startsWith('#')) continue;
@@ -23,9 +25,12 @@ if (existsSync(envFile)) {
     if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
       value = value.slice(1, -1);
     }
-    if (!(key in process.env)) process.env[key] = value;
+    loaded[key] = value;
+    if (override || !(key in process.env)) process.env[key] = value;
   }
+  return loaded;
 }
+loadEnvFile();
 
 const PORT = Number(process.env.PORT || 8787);
 const HOST = process.env.HOST || '127.0.0.1';
@@ -1532,13 +1537,19 @@ const OPENID_ENDPOINT = `${COMMUNITY_ORIGIN}/openid/login`;
 // A specific *other* account is rejected, because Steam compares the value
 // with the identity of the signed-in user.
 //
-// The generic placeholder is the default: Steam then shows the account picker
-// and returns the real identity in the reply, so anybody can sign in.
-// Override it with STEAM_OPENID_CLAIMED_ID if you want to pin one account.
-const OPENID_CLAIMED_ID = (
-  process.env.STEAM_OPENID_CLAIMED_ID
-  || 'http://steamcommunity.com/openid/id/76561197960287930'
-).trim();
+// The generic placeholder (Steam's documented example) is used by default: Steam
+// then shows the account picker and returns the real identity in the reply, so
+// anybody can sign in.
+//
+// STEAM_OPENID_CLAIMED_ID overrides it. The value is re-read from .env on every
+// login, so you can try another form by editing .env — no restart needed.
+const DEFAULT_CLAIMED_ID = 'https://steamcommunity.com/openid/id/76561197960287930';
+function currentClaimedId() {
+  // .env 里的值优先（它是可以在运行期改的），没有才用进程环境变量。
+  const fromFile = loadEnvFile({ override: false }).STEAM_OPENID_CLAIMED_ID;
+  const value = String(fromFile || process.env.STEAM_OPENID_CLAIMED_ID || DEFAULT_CLAIMED_ID).trim();
+  return value;
+}
 // Steam echoes the identity back as http://…, but accept https:// as well.
 const steamIdFromIdentity = (value) => {
   const match = /^https?:\/\/steamcommunity\.com\/openid\/id\/(\d{17})$/i.exec(String(value || '').trim());
@@ -1580,11 +1591,12 @@ function parseCookies(req) {  const header = req.headers.cookie || '';
 }
 
 function buildOpenIdUrl(returnTo) {
+  const claimedId = currentClaimedId();
   const params = new URLSearchParams({
     'openid.ns': OPENID_NS,
     'openid.mode': 'checkid_setup',
-    'openid.claimed_id': OPENID_CLAIMED_ID,
-    'openid.identity': OPENID_CLAIMED_ID,
+    'openid.claimed_id': claimedId,
+    'openid.identity': claimedId,
     'openid.return_to': returnTo,
   });
   return `${OPENID_ENDPOINT}?${params.toString()}`;
@@ -2279,7 +2291,7 @@ const server = http.createServer(async (req, res) => {
           if (looksLikeClaimIdProblem) {
             // Steam 只有在能按 return_to 的域名找到 API Key 时才会完成握手，
             // 找不到时它会回这句误导性的 "Invalid claimed_id or identity"。
-            hints.push(`Steam 拒绝了身份校验（Invalid claimed_id or identity）：这两种情况都会触发它 —— ① claimed_id 必须是 Steam 认可的身份地址（http://steamcommunity.com/openid/id/<SteamID>，通用占位身份 76561197960287930 最稳）；② Steam 必须能按回跳域名「${host}」找到这把 API Key，所以请在 API Key 页面把「网站域名」(Website) 填成 ${host}，「域名名称」(Domain) 也填上，然后点「注册我的 Steam Web API 密钥」`);
+            hints.push(`Steam 拒绝了身份校验（Invalid claimed_id or identity）：这两种情况都会触发它 —— ① claimed_id 必须是 Steam 认可的身份地址（当前用的是 ${currentClaimedId()}，常见写法是 http://steamcommunity.com/openid/id/<SteamID>，通用占位身份 76561197960287930）；② Steam 必须能按回跳域名「${host}」找到这把 API Key，所以请在 API Key 页面把「网站域名」(Website) 填成 ${host}，「域名名称」(Domain) 也填上，然后点「注册我的 Steam Web API 密钥」`);
           }
           if (!looksLikeDomain) {
             hints.push('Steam 不接受 IP 作为回调域名，请改用域名访问本站');
