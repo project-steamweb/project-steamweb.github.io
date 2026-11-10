@@ -211,6 +211,46 @@ ADMIN_PASSWORD=你的强密码
 | `GET /api/admin/stats` | 服务运行状态 |
 | `GET /api/admin/titles` | 读取称号列表 |
 | `PUT /api/admin/titles` | 保存称号列表 |
+| `POST /api/admin/password` | 修改管理员密码 |
+
+## 部署到公网（Cloudflare）
+
+服务默认只监听 `127.0.0.1:8787`，不能直接暴露到公网。推荐用 **Cloudflare Tunnel**：不需要公网 IP、不需要在防火墙上开端口，也不用管证书。
+
+### 502 的原因
+
+把域名挂在 Cloudflare 代理（橙色云）后面时，Cloudflare 只会去连**标准端口**（80 / 443 / 8080 / 8443 / 2052 / 2082 / 2083 …）。如果源站是一个 FRP 之类的隧道，分配到的往往是 `208252` 这种随机高端口，Cloudflare 连不上就会一直返回 **502 Bad Gateway**。
+
+### 用 Cloudflare Tunnel
+
+1. 打开 <https://one.dash.cloudflare.com/> → 左侧 **Networks → Tunnels** → **Create a tunnel** → 选 **Cloudflared**，命名（例如 `steam-atlas`）；
+2. 在配置页复制那行 `cloudflared tunnel run --token ...` 里的令牌；
+3. 把令牌保存到 `tools/.tunnel-token.txt`（只有令牌本身，已在 `.gitignore` 里 ✓）；
+4. 运行 `tools/启动隧道.cmd`（`tools/cloudflared.exe` 已随项目下载 ✓）；
+5. 回到 Tunnels 的 **Public Hostname**，添加一条：
+
+   | 字段 | 值 |
+   | --- | --- |
+   | Subdomain | `steam` |
+   | Domain | `wangzic.fun` |
+   | Type | `HTTP` |
+   | URL | `127.0.0.1:8787` |
+
+6. 隧道上线后，把 DNS 里的 `steam` 记录改成隧道自动创建的 CNAME（`xxx.cfargotunnel.com`）✓。
+
+Cloudflare 边缘会负责 TLS，回源时自动带上 `X-Forwarded-Proto: https` ✓，所以回调地址自动就是 https ✓。
+
+### 让站点一直在线
+
+服务默认随会话运行，关掉就下线。把它放进**启动文件夹**即可开机自启（不需要管理员权限 ✓）：
+
+| 文件 | 作用 |
+| --- | --- |
+| `tools/启动服务.cmd` | 后台启动 Node 服务，日志写到 `logs/server.log` |
+| `tools/停止服务.cmd` | 按端口结束服务 |
+| `tools/启动隧道.cmd` | 启动 Cloudflare 隧道 |
+
+对应的开机自启脚本在 `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\` 下 ✓（`SteamAtlas 服务.cmd`、`SteamAtlas 隧道.cmd` ✓）。
 
 ## 启动本机 Steam 客户端
 

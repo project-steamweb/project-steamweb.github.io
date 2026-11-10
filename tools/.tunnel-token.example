@@ -1,0 +1,3 @@
+把 Cloudflare 隧道令牌粘贴到这个文件（改成 .tunnel-token.txt）。
+令牌在 https://one.dash.cloudflare.com/ → Networks → Tunnels → 你的隧道 → Configure 里，
+形如 eyJhIjoiXXXXXXX...
