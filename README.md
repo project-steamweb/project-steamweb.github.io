@@ -184,25 +184,41 @@ steam://store/<appid>    在客户端中打开商店页
 
 | 顺序 | 来源 | 能拿到什么 | 标记 |
 | --- | --- | --- | --- |
-| 1 | 换区服的商店接口 | 与正常页面完全一致的完整数据 | `store-region` |
-| 2 | Steam Web API 应用列表 | 游戏名称、类型、上架时间 | `webapi` |
-| 3 | Steam appinfo 协议（Content Server） | 已下架游戏的完整资料 | `appinfo` |
+| 1 | 换区服的商店接口 | 与正常页面完全一致的完整数据（含价格） | `store-region` |
+| 2 | Steam appinfo 协议（PICS） | 名称、开发商、发行商、发售日期、DLC 列表 | `appinfo` |
+| 3 | Steam Web API 应用列表 | 游戏名称、类型、上架时间 | `webapi` |
 
 页面顶部会显示当前数据的来源与说明，不会把受限数据伪装成正常商店数据。
 
-第 1 步解决的是**区服限制**：很多游戏在国区被单独下架，但在美区、日区等仍然可以买到。比如国区查不到的游戏会自动从其它区服取数据并标注来源区服。
+第 1 步解决的是**区服限制**：很多游戏在国区被单独下架，但在美区、日区等仍然可以买到。比如国区查不到的游戏会自动从其它区服取数据并标注来源区服。区服扫描分两轮（先试美日德台港，再试东南亚韩国巴西俄罗斯法国），只有当游戏还留在 Steam 应用列表里时才会跑第二轮，避免无谓地消耗接口额度。
 
-第 3 步是 `appinfo.mjs` 模块实现的 Steam Content Server 协议（就是 steamcmd 读资料用的那套，TLS + WebSocket + Protobuf + KeyValues 全是纯 Node 实现，没有第三方依赖）。它能读到已经彻底下架、商店接口完全查不到的游戏。
+第 2 步是 `appinfo.mjs` 模块实现的 Steam Content Server 协议（就是 steamcmd 读资料用的那套）。协议细节对照 [SteamRE/SteamKit2](https://github.com/SteamRE/SteamKit) 与 [DoctorMcKay/node-steam-user](https://github.com/DoctorMcKay/node-steam-user) 的实现：
 
-> 该协议需要连接 `cm.steampowered.com:443`。如果运行环境无法访问该地址（例如被防火墙拦截），模块会安静地跳过，站点功能不受影响。
+| 环节 | 内容 |
+| --- | --- |
+| 服务器列表 | `ISteamDirectory/GetCMListForConnect/v1/` 取官方 CM 节点 |
+| 传输 | 明文 TCP 27017，每帧为 `长度 + "VT01" 魔数 + 数据` |
+| 通道加密 | RSA-OAEP-SHA1 挑战应答 + NetFilter（AES-256-CBC + HMAC-SHA1，IV = HMAC ‖ 随机数） |
+| 握手 | `CMsgClientHello` → 匿名 `CMsgClientLogon`（`anon_user_target_account_name = "anonymous"`） |
+| 资料请求 | `CMsgClientPICSProductInfoRequest` → `CMsgClientPICSProductInfoResponse` |
+| 消息打包 | 服务器会把多条消息装进 `Multi`（EMsg 1），必要时还会 gzip 压缩 |
+| 资料格式 | VDF 文本（`"appinfo" { ... }`） |
+
+全流程纯 Node 实现，没有任何第三方依赖。
+
+> **能力边界**：PICS 只能查到 Steam 数据库里还在的应用。例如 App ID 999（Painkiller Overdose Trailer）、3000（GTI Racing）、5000（Painkiller Overdose Teaser）商店接口完全查不到，但 PICS 能给出名称、开发商与发售日期。
+>
+> 而彻底从 Steam 下架、Valve 同时从数据库里清掉的游戏（例如 Evolve 280490、Rise of the Tomb Raider 391990、Mafia III 270320），任何公开接口都查不到——这不是本项目的限制，而是 Steam 侧已经没有这份数据了。此时站点会明确返回「没有找到这款游戏」，而不是编造内容。
 
 ### 请求节流
 
 Steam 对突发请求很敏感，连续密集请求会收到 403 甚至被临时限制。因此服务端做了：
 
-- 商店接口最小请求间隔 140ms；
-- 收到 403 后进入 60 秒全局冷却，期间不再请求 Steam；
-- 查询失败的游戏会缓存 30 分钟，避免反复扫描各区服。
+- 商店接口最小请求间隔 220ms；
+- 收到 403 / 429 后进入 90 秒全局冷却，期间不再请求 Steam；
+- 查询失败的游戏会缓存 30 分钟，避免反复扫描各区服；
+- 整个解析结果缓存 10 分钟，重复访问几乎不产生新的请求；
+- appinfo 协议走的是 Steam 的 CM 服务器，不占用商店接口的额度。
 
 ## 部署说明
 
@@ -234,7 +250,7 @@ steam-web/
 │  └─ README.md            # 安装与使用说明
 ├─ test/
 │  ├─ openid.test.mjs      # Steam OpenID 登录握手的端到端测试
-│  └─ appinfo.test.mjs     # KeyValues 解析与字段抽取的单元测试
+│  └─ appinfo.test.mjs     # VDF 解析与资料字段抽取的单元测试
 ├─ public/
 │  ├─ index.html           # 完整版应用页面
 │  ├─ app.js               # 完整版 SPA、搜索、比价、玩家档案

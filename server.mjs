@@ -165,8 +165,8 @@ function sleep(ms) {
 
 // Steam 对突发请求很敏感：短时间内大量请求会直接返回 403（整个 IP 被临时限制）。
 // 这里做两件事：给商店接口加最小间隔，并在收到 403 后进入全局冷却。
-const STEAM_REQUEST_INTERVAL_MS = 140;
-const STEAM_COOLDOWN_MS = 60 * 1000;
+const STEAM_REQUEST_INTERVAL_MS = 220;
+const STEAM_COOLDOWN_MS = 90 * 1000;
 let steamCooldownUntil = 0;
 let lastSteamRequestAt = 0;
 
@@ -483,9 +483,10 @@ async function getDlcList(appid, cc, language = STORE_LANGUAGE) {
 
 // 游戏在商店接口失败时的兜底顺序：
 // 1) 换一个区服再试（很多游戏只在个别区服上架或被单独下架）；
-// 2) Steam Web API 的应用列表（能拿到名称与类型）；
-// 3) Steam appinfo 协议（能拿到已下架游戏的完整资料）。
-const FALLBACK_REGIONS = ['us', 'jp', 'de', 'tw', 'hk', 'br', 'ru', 'sg', 'kr'];
+// 2) Steam appinfo 协议（能拿到商店没有公开的游戏资料）；
+// 3) Steam Web API 的应用列表（至少还能给出名称）。
+const FALLBACK_REGIONS_TIER1 = ['us', 'jp', 'de', 'tw', 'hk'];
+const FALLBACK_REGIONS_TIER2 = ['sg', 'kr', 'br', 'ru', 'fr'];
 const FALLBACK_CONCURRENCY = 3;
 const APP_FAILURE_TTL_MS = 30 * 60 * 1000;
 
@@ -516,7 +517,7 @@ async function lookupAppInStoreList(appid) {
 }
 
 // 兜底返回的资料字段较少，结构与商店接口保持一致，页面可以照常渲染。
-function sparseApp(appid, { name, type = 'game', price = null, releaseDate = null, developer = null, publisher = null, description = '', availability = 'webapi', source = 'webapi', note = '' }) {
+function sparseApp(appid, { name, type = 'game', price = null, releaseDate = null, developer = null, publisher = null, description = '', header = '', availability = 'webapi', source = 'webapi', note = '' }) {
   return {
     appid,
     name: name || `App ${appid}`,
@@ -525,7 +526,7 @@ function sparseApp(appid, { name, type = 'game', price = null, releaseDate = nul
     shortDescription: description,
     description: description,
     about: description,
-    headerImage: '',
+    headerImage: header || '',
     backgroundImage: '',
     screenshots: [],
     movies: [],
@@ -567,6 +568,16 @@ function sparseApp(appid, { name, type = 'game', price = null, releaseDate = nul
 
 // 商店接口拿不到时的统一入口。
 async function resolveAppInfo(appid, cc) {
+  // 整个解析过程都会打 Steam 接口，结果缓存 10 分钟，避免重复查询反复消耗额度。
+  const key = `resolve:${appid}:${cc}`;
+  const hit = cacheGet(key);
+  if (hit) return hit;
+  const result = await resolveAppInfoUncached(appid, cc);
+  cacheSet(key, result, 10 * 60 * 1000);
+  return result;
+}
+
+async function resolveAppInfoUncached(appid, cc) {
   const region = REGION_BY_CC.get(cc) || REGION_BY_CC.get('cn');
   const failureKey = `appfail:${appid}:${region.cc}`;
 
@@ -590,62 +601,87 @@ async function resolveAppInfo(appid, cc) {
     }
 
     if (notAvailable) {
-      console.warn(`[app] ${appid} 在 ${region.cc} 不可用，开始区服回退`);
-      const candidateRegions = FALLBACK_REGIONS.filter((fallbackCc) => fallbackCc !== region.cc);
-      const regionResults = await mapLimit(candidateRegions, FALLBACK_CONCURRENCY, async (fallbackCc) => {
-        try {
-          const app = await getAppData(appid, fallbackCc, STORE_LANGUAGE);
-          return { app, fallbackCc };
-        } catch {
-          return null;
-        }
-      });
-      const regionHit = regionResults.find(Boolean);
-      if (regionHit) {
-        const fallbackRegion = REGION_BY_CC.get(regionHit.fallbackCc);
-        console.log(`[app] ${appid} 通过 ${regionHit.fallbackCc} 区服取得数据`);
-        return {
-          ...regionHit.app,
-          availability: 'store-region',
-          source: 'store',
-          fallbackRegion: { cc: regionHit.fallbackCc, code: fallbackRegion.code, name: fallbackRegion.name },
-          note: `该游戏在 ${region.name} 区服不可用，以下数据来自 ${fallbackRegion.name} 区服。`,
-        };
+      // 第一轮：常见的几个区服，先把「区服限制」的情况用完整商店数据解决。
+      const firstHit = await scanOtherRegions(appid, region.cc, FALLBACK_REGIONS_TIER1);
+      if (firstHit) return firstHit;
+
+      // 第二轮准备：Steam Web API 的应用列表（判断游戏是否还在商店里，
+      // 走的是另一个主机，额度宽松）与 Steam appinfo 协议（完全不占商店额度）并行。
+      const [listed, appInfo] = await Promise.all([
+        lookupAppInStoreList(appid),
+        cached(`appinfo:${appid}`, 60 * 60 * 1000, () => fetchAppInfo(appid)),
+      ]);
+
+      // 还在商店列表里 → 说明只是某些区服不可用，值得再扫一轮拿带价格的完整数据。
+      if (listed?.name) {
+        const secondHit = await scanOtherRegions(appid, region.cc, FALLBACK_REGIONS_TIER2);
+        if (secondHit) return secondHit;
       }
+
+      // Steam appinfo 协议：商店完全查不到的游戏靠它补上。
+      if (appInfo?.name) {
+        console.log(`[app] ${appid} 通过 appinfo 取得资料：${appInfo.name}`);
+        return sparseApp(appid, {
+          name: appInfo.localizedName || appInfo.name,
+          type: appInfo.type,
+          description: appInfo.description,
+          developer: appInfo.developer,
+          publisher: appInfo.publisher,
+          releaseDate: appInfo.releaseDate,
+          header: appInfo.header,
+          price: appInfo.price ? normalizePrice(appInfo.price, 'USD') : null,
+          availability: 'appinfo',
+          source: 'appinfo',
+          note: '该游戏未在商店公开（可能已下架或未公开），以下资料来自 Steam appinfo 协议。',
+        });
+      }
+
+      // Steam Web API 应用列表：至少还能给出名称。
+      if (listed?.name) {
+        return sparseApp(appid, {
+          name: listed.name,
+          availability: 'webapi',
+          source: 'webapi',
+          note: '该游戏未在商店公开，Steam Web API 仅能提供名称与上架信息。',
+        });
+      }
+
+      cacheSet(failureKey, { status: primaryError?.status || 404, message: primaryError?.message, code: primaryError?.code }, APP_FAILURE_TTL_MS);
+      throw primaryError;
     }
 
-    // 2) Steam Web API 应用列表
-    const listed = await lookupAppInStoreList(appid);
-    if (listed?.name) {
-      return sparseApp(appid, {
-        name: listed.name,
-        availability: 'webapi',
-        source: 'webapi',
-        note: '该游戏未在商店公开，Steam Web API 仅能提供名称与上架信息。',
-      });
-    }
-
-    // 3) Steam appinfo 协议
-    const appInfo = await fetchAppInfo(appid);
-    if (appInfo?.name) {
-      console.log(`[app] ${appid} 通过 appinfo 取得资料：${appInfo.name}`);
-      return sparseApp(appid, {
-        name: appInfo.name,
-        type: appInfo.type,
-        description: appInfo.description,
-        developer: appInfo.developer,
-        publisher: appInfo.publisher,
-        releaseDate: appInfo.releaseDate,
-        price: appInfo.price ? normalizePrice(appInfo.price, 'USD') : null,
-        availability: 'appinfo',
-        source: 'appinfo',
-        note: '该游戏未在商店公开（可能已下架或未公开），以下资料来自 Steam appinfo 协议。',
-      });
-    }
-
+    // 上游暂时不可用（非「查不到」）时不做兜底，直接把错误抛给调用方。
     cacheSet(failureKey, { status: primaryError?.status || 404, message: primaryError?.message, code: primaryError?.code }, APP_FAILURE_TTL_MS);
     throw primaryError;
   }
+}
+
+// 依次尝试其它区服，找到第一个能返回完整商店数据的。
+async function scanOtherRegions(appid, currentCc, regions) {
+  const candidates = regions.filter((fallbackCc) => fallbackCc !== currentCc);
+  if (!candidates.length) return null;
+  console.warn(`[app] ${appid} 在 ${currentCc} 不可用，尝试其它区服：${candidates.join(', ')}`);
+  const regionResults = await mapLimit(candidates, FALLBACK_CONCURRENCY, async (fallbackCc) => {
+    try {
+      const app = await getAppData(appid, fallbackCc, STORE_LANGUAGE);
+      return { app, fallbackCc };
+    } catch {
+      return null;
+    }
+  });
+  const regionHit = regionResults.find(Boolean);
+  if (!regionHit) return null;
+
+  const fallbackRegion = REGION_BY_CC.get(regionHit.fallbackCc);
+  const currentRegion = REGION_BY_CC.get(currentCc);
+  console.log(`[app] ${appid} 通过 ${regionHit.fallbackCc} 区服取得数据`);
+  return {
+    ...regionHit.app,
+    availability: 'store-region',
+    source: 'store',
+    fallbackRegion: { cc: regionHit.fallbackCc, code: fallbackRegion.code, name: fallbackRegion.name },
+    note: `该游戏在 ${currentRegion.name} 区服不可用，以下数据来自 ${fallbackRegion.name} 区服。`,
+  };
 }
 
 async function getAppData(appid, cc, language = STORE_LANGUAGE, { timeout = 12000, retries = 1 } = {}) {

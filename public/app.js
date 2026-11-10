@@ -801,8 +801,7 @@ function availabilityBanner(app) {
     'store-region': '区服回退',
     webapi: 'Steam Web API',
     appinfo: 'Steam appinfo',
-  };
-  return `
+  };  return `
     <section class="availability-banner ${tone}">
       <div class="availability-head">
         <span class="availability-tag">${escapeHtml(titles[app.availability] || app.availability)}</span>

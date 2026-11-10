@@ -1,93 +1,68 @@
-// appinfo 模块的离线单元测试：构造 KeyValues 二进制数据，验证解析与字段抽取。
-import { parseKeyValues, kvToAppInfo } from '../appinfo.mjs';
+// appinfo 模块的离线单元测试：VDF 文本解析与字段抽取。
+import { parseVdf, kvToAppInfo } from '../appinfo.mjs';
 
-/* --- KeyValues 写入器（与 Steam 的二进制格式一致） --- */
-const TYPE_OBJECT = 0x00;
-const TYPE_STRING = 0x01;
-const TYPE_INT32 = 0x02;
-const TYPE_END = 0x08;
-
-function cstr(text) {
-  return Buffer.concat([Buffer.from(text, 'utf8'), Buffer.from([0])]);
+const SAMPLE = `"appinfo"
+{
+	"appid"		"1245620"
+	"common"
+	{
+		"name"		"ELDEN RING"
+		"type"		"Game"
+		"releasestate"		"released"
+		"name_localized"
+		{
+			"schinese"		"艾尔登法环"
+			"tchinese"		"艾爾登法環"
+		}
+		"steam_release_date"		"1645744020"
+		"header_image"
+		{
+			"english"		"header.jpg"
+		}
+		"metacritic_score"		"94"
+	}
+	"extended"
+	{
+		"developer"		"FromSoftware, Inc."
+		"publisher"		"FromSoftware, Inc."
+		"listofdlc"		"1799420,1896300"
+	}
 }
-
-function kvString(key, value) {
-  return Buffer.concat([Buffer.from([TYPE_STRING]), cstr(key), cstr(value)]);
-}
-
-function kvInt(key, value) {
-  const body = Buffer.alloc(4);
-  body.writeInt32LE(value, 0);
-  return Buffer.concat([Buffer.from([TYPE_INT32]), cstr(key), body]);
-}
-
-function kvObject(key, children) {
-  return Buffer.concat([Buffer.from([TYPE_OBJECT]), cstr(key), Buffer.concat(children), Buffer.from([TYPE_END])]);
-}
-
-function kvRoot(children) {
-  return Buffer.concat([Buffer.from([TYPE_OBJECT]), cstr(''), Buffer.concat(children), Buffer.from([TYPE_END])]);
-}
-
-/* --- 构造一份与 steamcmd app_info_print 结构一致的样例 --- */
-const buffer = kvRoot([
-  kvString('appid', '280490'),
-  kvObject('common', [
-    kvString('name', 'Evolve'),
-    kvString('type', 'Game'),
-    kvString('developer', 'Turtle Rock Studios'),
-    kvString('publisher', 'Turtle Rock Studios'),
-    kvString('short_description', '一款四人合作射击游戏。'),
-    kvInt('parent', 0),
-  ]),
-  kvObject('extended', [
-    kvObject('section', [
-      kvString('name', 'Evolve'),
-      kvString('type', 'Game'),
-      kvString('developer', 'Turtle Rock Studios'),
-      kvString('publisher', 'Turtle Rock Studios'),
-      kvString('short_description', '一款四人合作射击游戏。'),
-      kvObject('price', [
-        kvString('currency', 'CNY'),
-        kvInt('initial', 29800),
-        kvInt('final', 29800),
-        kvInt('discount_percent', 0),
-      ]),
-      kvObject('dlcs', [
-        kvString('280491', 'Huntsman Pack'),
-        kvString('280492', 'Strider Pack'),
-      ]),
-    ]),
-    kvObject('release_date', [
-      kvString('date', '2015 年 2 月 8 日'),
-    ]),
-    kvObject('assets', [
-      kvString('0', 'https://cdn.example/header.jpg'),
-    ]),
-  ]),
-]);
+`;
 
 const checks = [];
 
-const kv = parseKeyValues(buffer);
-checks.push(['KV 根键为空', kv.key === '']);
-checks.push(['KV 含 appid', kv.value.appid === '280490']);
-checks.push(['KV 含 common.name', kv.value.common.name === 'Evolve']);
-checks.push(['KV 嵌套对象正确', kv.value.extended.release_date.date === '2015 年 2 月 8 日']);
-checks.push(['KV 含价格', kv.value.extended.section.price.final === 29800]);
-checks.push(['KV 含 DLC 映射', Object.keys(kv.value.extended.section.dlcs).length === 2]);
+const vdf = parseVdf(SAMPLE);
+checks.push(['根键为 appinfo', vdf.key === 'appinfo']);
+checks.push(['顶层含 common', typeof vdf.value.common === 'object']);
+checks.push(['顶层含 extended', typeof vdf.value.extended === 'object']);
+checks.push(['appid 正确', vdf.value.appid === '1245620']);
+checks.push(['name 正确', vdf.value.common.name === 'ELDEN RING']);
+checks.push(['嵌套对象正确', vdf.value.common.name_localized.schinese === '艾尔登法环']);
+checks.push(['列表字段正确', vdf.value.extended.listofdlc === '1799420,1896300']);
 
-const info = kvToAppInfo(kv);
-checks.push(['抽取到名称', info?.name === 'Evolve']);
+const info = kvToAppInfo(vdf);
+checks.push(['抽取到名称', info?.name === 'ELDEN RING']);
+checks.push(['抽取到中文名', info?.localizedName === '艾尔登法环']);
 checks.push(['类型映射为 game', info?.type === 'game']);
-checks.push(['抽取到开发商', info?.developer === 'Turtle Rock Studios']);
-checks.push(['抽取到发行商', info?.publisher === 'Turtle Rock Studios']);
-checks.push(['抽取到简介', info?.description === '一款四人合作射击游戏。']);
-checks.push(['抽取到发售日期', info?.releaseDate === '2015 年 2 月 8 日']);
-checks.push(['价格单位为分', info?.price?.final === 29800]);
-checks.push(['价格币种正确', info?.price?.currency === 'CNY']);
-checks.push(['DLC 列表条目数', info?.dlcs?.length === 2]);
-checks.push(['DLC 含名称', info?.dlcs?.[0]?.name === 'Huntsman Pack']);
+checks.push(['抽取到开发商', info?.developer === 'FromSoftware, Inc.']);
+checks.push(['抽取到发行商', info?.publisher === 'FromSoftware, Inc.']);
+checks.push(['发售日期换算正确', info?.releaseDate === '2022-02-24']);
+checks.push(['头图拼好 CDN 地址', info?.header?.includes('/steam/apps/1245620/header.jpg')]);
+checks.push(['DLC 列表两个', info?.dlcs?.length === 2]);
+checks.push(['DLC App ID 正确', info?.dlcs?.[0]?.appid === 1799420]);
+checks.push(['没有价格时为 null', info?.price === null]);
+
+// 边界情况
+const empty = parseVdf('"appinfo"\n{\n}\n');
+checks.push(['空对象解析正常', empty.value && typeof empty.value === 'object']);
+checks.push(['空对象没有名称', kvToAppInfo(empty) === null]);
+
+const noComment = parseVdf('// 注释\n"a"\n"b"\n');
+checks.push(['忽略注释', noComment.key === 'a' && noComment.value === 'b']);
+
+const nested = parseVdf('// 注释\n"root"\n{\n\t// 另一个注释\n\t"x"\t\t"y"\n}\n');
+checks.push(['忽略对象内注释', nested.value?.x === 'y']);
 
 for (const [name, ok] of checks) console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}`);
 const failed = checks.filter(([, ok]) => !ok).length;
