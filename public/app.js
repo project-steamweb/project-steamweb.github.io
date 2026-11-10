@@ -1945,7 +1945,7 @@ function adminLoginPage(message = '') {
     <div class="page admin-page">
       <div class="admin-login panel">
         <div class="panel-title-row"><h2>管理后台</h2><span>ADMIN ACCESS</span></div>
-        <p class="admin-hint">请输入管理员账号与密码。默认账号 <code>steamweb</code>，可在服务端通过 <code>ADMIN_USERNAME</code> / <code>ADMIN_PASSWORD</code> 修改。</p>
+        <p class="admin-hint">请输入管理员账号与密码。初始账号为 <code>steamweb</code>，登录后可以在后台自行修改密码。</p>
         ${message ? `<p class="admin-error">${escapeHtml(message)}</p>` : ''}
         <form class="admin-form" id="admin-login-form">
           <label>账号<input type="text" name="username" autocomplete="username" required></label>
@@ -2007,6 +2007,17 @@ function adminDashboard(stats, titles) {
           <button class="button" type="button" data-action="admin-add-title">${icon('sparkles')}添加称号</button>
           <button class="button primary" type="button" data-action="admin-save-titles">${icon('check')}保存全部</button>
         </div>
+      </section>
+
+      <section class="panel admin-panel">
+        <div class="panel-title-row"><h2>修改登录密码</h2><span>PASSWORD</span></div>
+        <p class="admin-hint">修改后立即生效，其它设备上已登录的管理员会话会被强制下线。新密码至少 8 位，且需要同时包含字母和数字。若服务端设置了 <code>ADMIN_PASSWORD</code> 环境变量，重启后会以环境变量为准。</p>
+        <form class="admin-form row" id="admin-password-form">
+          <label>当前密码<input type="password" name="currentPassword" autocomplete="current-password" required></label>
+          <label>新密码<input type="password" name="newPassword" autocomplete="new-password" minlength="8" required></label>
+          <label>确认新密码<input type="password" name="confirmPassword" autocomplete="new-password" minlength="8" required></label>
+          <button class="button primary" type="submit">${icon('lock')}修改密码</button>
+        </form>
       </section>
     </div>`;
 }
@@ -2241,21 +2252,52 @@ function initStaticEvents() {
 }
 
 async function handleDelegatedSubmit(event) {
-  const form = event.target.closest('#admin-login-form');
-  if (!form) return;
-  event.preventDefault();
-  const data = new FormData(form);
-  const submit = form.querySelector('button[type="submit"]');
-  if (submit) { submit.disabled = true; submit.textContent = '登录中…'; }
-  try {
-    await api('/api/admin/login', {
-      method: 'POST',
-      body: JSON.stringify({ username: data.get('username'), password: data.get('password') }),
-    });
-    toast('管理员登录成功');
-    await renderAdmin(state.renderToken, state.abortController?.signal);
-  } catch (error) {
-    setView(adminLoginPage(error.message || '登录失败'));
+  const loginForm = event.target.closest('#admin-login-form');
+  if (loginForm) {
+    event.preventDefault();
+    const data = new FormData(loginForm);
+    const submit = loginForm.querySelector('button[type="submit"]');
+    if (submit) { submit.disabled = true; submit.textContent = '登录中…'; }
+    try {
+      await api('/api/admin/login', {
+        method: 'POST',
+        body: JSON.stringify({ username: data.get('username'), password: data.get('password') }),
+      });
+      toast('管理员登录成功');
+      await renderAdmin(state.renderToken, state.abortController?.signal);
+    } catch (error) {
+      setView(adminLoginPage(error.message || '登录失败'));
+    }
+    return;
+  }
+
+  const passwordForm = event.target.closest('#admin-password-form');
+  if (passwordForm) {
+    event.preventDefault();
+    const data = new FormData(passwordForm);
+    const current = String(data.get('currentPassword') || '');
+    const next = String(data.get('newPassword') || '');
+    const confirm = String(data.get('confirmPassword') || '');
+    if (next !== confirm) {
+      toast('两次输入的新密码不一致', 'error');
+      return;
+    }
+    const submit = passwordForm.querySelector('button[type="submit"]');
+    const original = submit ? submit.innerHTML : '';
+    if (submit) { submit.disabled = true; submit.textContent = '提交中…'; }
+    try {
+      await api('/api/admin/password', {
+        method: 'POST',
+        body: JSON.stringify({ currentPassword: current, newPassword: next }),
+      });
+      passwordForm.reset();
+      toast('密码已修改，请牢记新密码');
+    } catch (error) {
+      toast(error.message || '修改失败', 'error');
+    } finally {
+      if (submit) { submit.disabled = false; submit.innerHTML = original; }
+    }
+    return;
   }
 }
 

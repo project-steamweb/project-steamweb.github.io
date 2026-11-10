@@ -2,16 +2,9 @@
   "titles": [
     {
       "id": "owner",
-      "steamId": "76561199473775553",
+      "steamId": "76561199473775554",
       "label": "Owner",
       "color": "crimson",
-      "priority": 100
-    },
-    {
-      "id": "admin",
-      "steamId": "76561199473775554",
-      "label": "Admin",
-      "color": "blue",
       "priority": 50
     }
   ]

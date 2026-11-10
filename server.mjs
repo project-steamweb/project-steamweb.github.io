@@ -1750,6 +1750,38 @@ function verifyAdminCredentials(username, password) {
   }
 }
 
+// 修改管理员密码：必须先验证当前密码，再用新盐重新哈希写入。
+// 返回 { username }，失败时抛出 HttpError。
+function changeAdminPassword(currentPassword, newPassword) {
+  let data;
+  try {
+    data = JSON.parse(readFileSync(ADMIN_FILE, 'utf8'));
+  } catch {
+    throw new HttpError(500, '管理员凭据文件不可读', 'ADMIN_FILE_ERROR');
+  }
+  if (!verifyAdminCredentials(data.username, currentPassword)) {
+    throw new HttpError(401, '当前密码不正确', 'ADMIN_BAD_CREDENTIALS');
+  }
+  const next = String(newPassword || '');
+  if (next.length < 8) throw new HttpError(400, '新密码至少 8 位', 'ADMIN_WEAK_PASSWORD');
+  if (next.length > 128) throw new HttpError(400, '新密码过长（最多 128 位）', 'ADMIN_WEAK_PASSWORD');
+  if (next === String(currentPassword)) throw new HttpError(400, '新密码不能与当前密码相同', 'ADMIN_WEAK_PASSWORD');
+  if (!/[A-Za-z]/.test(next) || !/\d/.test(next)) {
+    throw new HttpError(400, '新密码需要同时包含字母和数字', 'ADMIN_WEAK_PASSWORD');
+  }
+
+  const salt = crypto.randomBytes(16).toString('hex');
+  const payload = {
+    username: data.username,
+    salt,
+    iterations: ADMIN_ITERATIONS,
+    hash: hashPassword(next, salt),
+    updatedAt: new Date().toISOString(),
+  };
+  writeFileSync(ADMIN_FILE, `${JSON.stringify(payload, null, 2)}\n`);
+  return { username: payload.username };
+}
+
 function adminAttemptBlocked(ip) {
   const record = adminAttempts.get(ip);
   if (!record) return false;
@@ -1979,6 +2011,7 @@ const server = http.createServer(async (req, res) => {
     pathname === '/api/auth/logout'
     || pathname === '/api/admin/login'
     || pathname === '/api/admin/logout'
+    || pathname === '/api/admin/password'
   );
   const putAllowed = method === 'PUT' && pathname === '/api/admin/titles';
 
@@ -2280,6 +2313,20 @@ const server = http.createServer(async (req, res) => {
         res.setHeader('Set-Cookie', adminCookie(token));
         console.log(`[admin] ${body.username} 已登录，来源 ${ip}`);
         sendJson(res, 200, { ok: true, username: String(body.username) });
+        return;
+      }
+
+      if (pathname === '/api/admin/password') {
+        const session = requireAdmin(req);
+        if (method !== 'POST') throw new HttpError(405, '仅支持 POST', 'METHOD_NOT_ALLOWED');
+        const body = await readJsonBody(req);
+        const result = changeAdminPassword(body.currentPassword ?? body.current, body.newPassword ?? body.new);
+        // 改密后踢掉其它已登录的管理员会话（当前会话保留）
+        for (const [token, value] of adminSessions) {
+          if (token !== session.token) adminSessions.delete(token);
+        }
+        console.log(`[admin] ${result.username} 修改了登录密码`);
+        sendJson(res, 200, { ok: true, username: result.username });
         return;
       }
 
