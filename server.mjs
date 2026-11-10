@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { fetchAppInfo } from './appinfo.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -54,7 +55,7 @@ function decryptStoredKey() {
 }
 
 const SERVER_KEY = (process.env.STEAM_API_KEY || decryptStoredKey() || '').trim();
-const APP_VERSION = '1.4.0';
+const APP_VERSION = '1.5.0';
 
 // Site titles shown after the Steam persona name. Keys are SteamID64 strings.
 // The admin panel can edit these at runtime; the list is persisted in
@@ -96,14 +97,16 @@ const REGIONS = [
 const REGION_BY_CC = new Map(REGIONS.map((region) => [region.cc, region]));
 const REGION_BY_CODE = new Map(REGIONS.map((region) => [region.code, region]));
 const STORE_LANGUAGE = 'schinese';
+const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36';
 const STORE_HEADERS = {
-  'User-Agent': 'SteamAtlas/1.0 (+local data explorer; contact: local-user)',
+  // 用常规浏览器 UA：Steam 对明显的脚本 UA 更容易直接返回 403。
+  'User-Agent': BROWSER_UA,
   Accept: 'application/json,text/plain,*/*',
   'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
   Cookie: 'birthtime=628473600; lastagecheckage=1-January-1990; wants_mature_content=1; mature_content=1',
 };
 const TEXT_HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36',
+  'User-Agent': BROWSER_UA,
   Accept: 'text/xml,application/xml,text/html;q=0.9,*/*;q=0.8',
   'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
   Cookie: 'birthtime=628473600; lastagecheckage=1-January-1990; wants_mature_content=1',
@@ -160,12 +163,39 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Steam 对突发请求很敏感：短时间内大量请求会直接返回 403（整个 IP 被临时限制）。
+// 这里做两件事：给商店接口加最小间隔，并在收到 403 后进入全局冷却。
+const STEAM_REQUEST_INTERVAL_MS = 140;
+const STEAM_COOLDOWN_MS = 60 * 1000;
+let steamCooldownUntil = 0;
+let lastSteamRequestAt = 0;
+
+function steamCoolingDown() {
+  return Date.now() < steamCooldownUntil;
+}
+
+function enterSteamCooldown() {
+  steamCooldownUntil = Date.now() + STEAM_COOLDOWN_MS;
+  console.warn('[steam] 上游返回 403，暂停请求 60 秒以免被进一步限制');
+}
+
+async function throttleSteamRequest() {
+  const wait = lastSteamRequestAt + STEAM_REQUEST_INTERVAL_MS - Date.now();
+  if (wait > 0) await sleep(wait);
+  lastSteamRequestAt = Date.now();
+}
+
 async function fetchJson(url, { timeout = 12000, retries = 1, headers = STORE_HEADERS } = {}) {
   let lastError;
   for (let attempt = 0; attempt <= retries; attempt += 1) {
     try {
+      if (steamCoolingDown()) {
+        throw new HttpError(503, 'Steam 暂时限制了请求频率，请稍后再试', 'STEAM_COOLDOWN');
+      }
+      await throttleSteamRequest();
       const response = await fetch(url, { headers, signal: AbortSignal.timeout(timeout), redirect: 'follow' });
       if (!response.ok) {
+        if (response.status === 403) enterSteamCooldown();
         if ((response.status === 429 || response.status >= 500) && attempt < retries) {
           await sleep(450 * (attempt + 1));
           continue;
@@ -449,6 +479,173 @@ async function getDlcList(appid, cc, language = STORE_LANGUAGE) {
   };
   cacheSet(cacheKey, result, 10 * 60 * 1000);
   return result;
+}
+
+// 游戏在商店接口失败时的兜底顺序：
+// 1) 换一个区服再试（很多游戏只在个别区服上架或被单独下架）；
+// 2) Steam Web API 的应用列表（能拿到名称与类型）；
+// 3) Steam appinfo 协议（能拿到已下架游戏的完整资料）。
+const FALLBACK_REGIONS = ['us', 'jp', 'de', 'tw', 'hk', 'br', 'ru', 'sg', 'kr'];
+const FALLBACK_CONCURRENCY = 3;
+const APP_FAILURE_TTL_MS = 30 * 60 * 1000;
+
+// Steam Web API 的应用列表：按 appid 升序返回，可以从一个「窗口」里直接定位
+// 目标应用，一次请求即可（列表本身不含已彻底下架的游戏）。
+async function lookupAppInStoreList(appid) {
+  if (!SERVER_KEY) return null;
+  const cacheKey = `applist:${appid}`;
+  const cached = cacheGet(cacheKey);
+  if (cached) return cached;
+  try {
+    const from = Math.max(0, appid - 20000);
+    const url = new URL(`${WEB_API_ORIGIN}/IStoreService/GetAppList/v1/`);
+    url.searchParams.set('key', SERVER_KEY);
+    url.searchParams.set('include_games', 'true');
+    url.searchParams.set('include_dlc', 'true');
+    url.searchParams.set('include_software', 'true');
+    url.searchParams.set('last_appid', String(from));
+    url.searchParams.set('max_results', '40000');
+    const json = await fetchJson(url.toString(), { timeout: 15000, retries: 0, headers: { Accept: 'application/json' } });
+    const apps = json?.response?.apps || [];
+    const hit = apps.find((item) => item.appid === appid) || null;
+    cacheSet(cacheKey, hit, 60 * 60 * 1000);
+    return hit;
+  } catch {
+    return null;
+  }
+}
+
+// 兜底返回的资料字段较少，结构与商店接口保持一致，页面可以照常渲染。
+function sparseApp(appid, { name, type = 'game', price = null, releaseDate = null, developer = null, publisher = null, description = '', availability = 'webapi', source = 'webapi', note = '' }) {
+  return {
+    appid,
+    name: name || `App ${appid}`,
+    type,
+    typeLabel: 'Game',
+    shortDescription: description,
+    description: description,
+    about: description,
+    headerImage: '',
+    backgroundImage: '',
+    screenshots: [],
+    movies: [],
+    developers: developer ? [developer] : [],
+    publishers: publisher ? [publisher] : [],
+    genres: [],
+    categories: [],
+    platforms: { windows: false, mac: false, linux: false },
+    controllerSupport: null,
+    releaseDate,
+    comingSoon: false,
+    recommendations: null,
+    metacritic: null,
+    achievements: null,
+    dlc: [],
+    packages: [],
+    ratings: [],
+    contentDescriptors: [],
+    contentNotes: null,
+    languageList: [],
+    platformRequirements: {},
+    platformRequirementsRecommended: {},
+    legalNotice: '',
+    supportInfo: null,
+    website: null,
+    supportUrl: null,
+    supportEmail: null,
+    price,
+    free: Boolean(price && Number(price.final) === 0),
+    isFree: Boolean(price && Number(price.final) === 0),
+    storeUrl: `${STORE_ORIGIN}/app/${appid}`,
+    region: { cc: REGION_BY_CC.get('cn')?.cc || 'cn', code: 'CN', name: '中国', currency: 'CNY' },
+    fullgame: null,
+    availability,
+    source,
+    note,
+  };
+}
+
+// 商店接口拿不到时的统一入口。
+async function resolveAppInfo(appid, cc) {
+  const region = REGION_BY_CC.get(cc) || REGION_BY_CC.get('cn');
+  const failureKey = `appfail:${appid}:${region.cc}`;
+
+  // 之前已经确认查不到的游戏，短期内不再重复扫描各区服，避免给 Steam 添麻烦。
+  const previousFailure = cacheGet(failureKey);
+  if (previousFailure) {
+    throw new HttpError(previousFailure.status || 404, previousFailure.message || '没有找到这款游戏，或该地区暂不提供', previousFailure.code || 'APP_NOT_FOUND');
+  }
+
+  try {
+    const app = await getAppData(appid, region.cc, STORE_LANGUAGE);
+    return { ...app, availability: 'store', source: 'store', note: '' };
+  } catch (primaryError) {
+    const notAvailable = primaryError?.code === 'APP_NOT_FOUND';
+    const upstreamBlocked = primaryError?.code === 'STEAM_API_FORBIDDEN' || primaryError?.code === 'STEAM_COOLDOWN';
+
+    if (upstreamBlocked) {
+      // Steam 暂时拒绝了请求（多半是请求过于频繁），此时再扫描各区服只会加重限制。
+      console.warn(`[app] ${appid} 上游暂时受限（${primaryError.code}），跳过区服回退`);
+      throw primaryError;
+    }
+
+    if (notAvailable) {
+      console.warn(`[app] ${appid} 在 ${region.cc} 不可用，开始区服回退`);
+      const candidateRegions = FALLBACK_REGIONS.filter((fallbackCc) => fallbackCc !== region.cc);
+      const regionResults = await mapLimit(candidateRegions, FALLBACK_CONCURRENCY, async (fallbackCc) => {
+        try {
+          const app = await getAppData(appid, fallbackCc, STORE_LANGUAGE);
+          return { app, fallbackCc };
+        } catch {
+          return null;
+        }
+      });
+      const regionHit = regionResults.find(Boolean);
+      if (regionHit) {
+        const fallbackRegion = REGION_BY_CC.get(regionHit.fallbackCc);
+        console.log(`[app] ${appid} 通过 ${regionHit.fallbackCc} 区服取得数据`);
+        return {
+          ...regionHit.app,
+          availability: 'store-region',
+          source: 'store',
+          fallbackRegion: { cc: regionHit.fallbackCc, code: fallbackRegion.code, name: fallbackRegion.name },
+          note: `该游戏在 ${region.name} 区服不可用，以下数据来自 ${fallbackRegion.name} 区服。`,
+        };
+      }
+    }
+
+    // 2) Steam Web API 应用列表
+    const listed = await lookupAppInStoreList(appid);
+    if (listed?.name) {
+      return sparseApp(appid, {
+        name: listed.name,
+        availability: 'webapi',
+        source: 'webapi',
+        note: '该游戏未在商店公开，Steam Web API 仅能提供名称与上架信息。',
+      });
+    }
+
+    // 3) Steam appinfo 协议
+    const appInfo = await fetchAppInfo(appid);
+    if (appInfo?.name) {
+      console.log(`[app] ${appid} 通过 appinfo 取得资料：${appInfo.name}`);
+      return sparseApp(appid, {
+        name: appInfo.name,
+        type: appInfo.type,
+        description: appInfo.description,
+        developer: appInfo.developer,
+        publisher: appInfo.publisher,
+        releaseDate: appInfo.releaseDate,
+        price: appInfo.price ? normalizePrice(appInfo.price, 'USD') : null,
+        availability: 'appinfo',
+        source: 'appinfo',
+        note: '该游戏未在商店公开（可能已下架或未公开），以下资料来自 Steam appinfo 协议。',
+      });
+    }
+
+    cacheSet(failureKey, { status: primaryError?.status || 404, message: primaryError?.message, code: primaryError?.code }, APP_FAILURE_TTL_MS);
+    throw primaryError;
+  }
 }
 
 async function getAppData(appid, cc, language = STORE_LANGUAGE, { timeout = 12000, retries = 1 } = {}) {
@@ -1642,7 +1839,7 @@ const server = http.createServer(async (req, res) => {
         const appid = parseAppid(appMatch[1]);
         const cc = String(url.searchParams.get('cc') || 'cn').toLowerCase();
         if (!REGION_BY_CC.has(cc)) throw new HttpError(400, '未知的区服代码', 'INVALID_REGION');
-        const game = await getAppData(appid, cc, STORE_LANGUAGE);
+        const game = await resolveAppInfo(appid, cc);
         sendJson(res, 200, game);
         return;
       }

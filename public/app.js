@@ -794,6 +794,25 @@ function requirementBlock(label, text) {
     </div>`;
 }
 
+function availabilityBanner(app) {
+  if (!app?.availability || app.availability === 'store') return '';
+  const tone = app.availability === 'store-region' ? 'blue' : 'orange';
+  const titles = {
+    'store-region': '区服回退',
+    webapi: 'Steam Web API',
+    appinfo: 'Steam appinfo',
+  };
+  return `
+    <section class="availability-banner ${tone}">
+      <div class="availability-head">
+        <span class="availability-tag">${escapeHtml(titles[app.availability] || app.availability)}</span>
+        <b>${escapeHtml(app.name)}</b>
+      </div>
+      <p>${escapeHtml(app.note || '该游戏未在当前区服的商店公开，以下为可获取到的资料。')}</p>
+      ${app.fallbackRegion ? `<small>数据区服：${escapeHtml(app.fallbackRegion.name)} · ${escapeHtml(app.fallbackRegion.code)}</small>` : ''}
+    </section>`;
+}
+
 function gamePage(app) {
   const region = currentRegion();
   const image = safeUrl(app.backgroundImage || app.headerImage);
@@ -860,6 +879,8 @@ function gamePage(app) {
       </section>
 
       <div id="price-board-slot">${priceSkeleton()}</div>
+
+      ${availabilityBanner(app)}
 
       <div class="game-layout">
         <div class="content-stack">

@@ -1884,6 +1884,30 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
 .basegame-link:hover { border-color: rgba(130, 182, 255, 0.5); background: rgba(130, 182, 255, 0.15); }
 .basegame-link svg { width: 11px; height: 11px; }
 
+/* Data availability banner (region fallback / Web API / appinfo) */
+.availability-banner {
+  margin-top: 18px;
+  padding: 15px 17px;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: rgba(255, 180, 107, 0.06);
+}
+.availability-banner.blue { border-color: rgba(130, 182, 255, 0.28); background: rgba(130, 182, 255, 0.06); }
+.availability-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.availability-head b { color: var(--text-soft); font-size: 13px; font-weight: 500; }
+.availability-tag {
+  padding: 3px 8px;
+  border: 1px solid rgba(255, 180, 107, 0.35);
+  border-radius: 5px;
+  color: var(--orange);
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  letter-spacing: 0.06em;
+}
+.availability-banner.blue .availability-tag { border-color: rgba(130, 182, 255, 0.38); color: var(--blue); }
+.availability-banner p { margin: 8px 0 0; color: var(--muted); font-size: 11px; line-height: 1.7; }
+.availability-banner small { display: block; margin-top: 6px; color: var(--muted-2); font-family: var(--font-mono); font-size: 8.5px; }
+
 /* DLC list */
 .dlc-list { display: flex; flex-direction: column; gap: 7px; margin-top: 16px; }
 .dlc-row {

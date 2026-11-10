@@ -178,6 +178,32 @@ steam://store/<appid>    在客户端中打开商店页
 
 安装方式见 [extension/README.md](extension/README.md)：在 `chrome://extensions` 或 `edge://extensions` 打开开发者模式，选择「加载已解压的扩展程序」并指向 `extension/` 目录。
 
+## 未公开 / 已下架游戏的查询
+
+商店接口只提供「当前在售」的游戏数据。查不到时服务端会按顺序兜底：
+
+| 顺序 | 来源 | 能拿到什么 | 标记 |
+| --- | --- | --- | --- |
+| 1 | 换区服的商店接口 | 与正常页面完全一致的完整数据 | `store-region` |
+| 2 | Steam Web API 应用列表 | 游戏名称、类型、上架时间 | `webapi` |
+| 3 | Steam appinfo 协议（Content Server） | 已下架游戏的完整资料 | `appinfo` |
+
+页面顶部会显示当前数据的来源与说明，不会把受限数据伪装成正常商店数据。
+
+第 1 步解决的是**区服限制**：很多游戏在国区被单独下架，但在美区、日区等仍然可以买到。比如国区查不到的游戏会自动从其它区服取数据并标注来源区服。
+
+第 3 步是 `appinfo.mjs` 模块实现的 Steam Content Server 协议（就是 steamcmd 读资料用的那套，TLS + WebSocket + Protobuf + KeyValues 全是纯 Node 实现，没有第三方依赖）。它能读到已经彻底下架、商店接口完全查不到的游戏。
+
+> 该协议需要连接 `cm.steampowered.com:443`。如果运行环境无法访问该地址（例如被防火墙拦截），模块会安静地跳过，站点功能不受影响。
+
+### 请求节流
+
+Steam 对突发请求很敏感，连续密集请求会收到 403 甚至被临时限制。因此服务端做了：
+
+- 商店接口最小请求间隔 140ms；
+- 收到 403 后进入 60 秒全局冷却，期间不再请求 Steam；
+- 查询失败的游戏会缓存 30 分钟，避免反复扫描各区服。
+
 ## 部署说明
 
 GitHub Pages 只能运行静态文件，不能运行 `server.mjs`。如需实时功能，请将 Node 服务部署到 Render、Railway、Fly.io 或自己的 VPS，再把前端 API 地址改为后端地址。
@@ -196,6 +222,7 @@ steam-web/
 ├─ index.html              # 无 Node.js 静态预览 / GitHub Pages 首页
 ├─ server.mjs              # 零依赖 Node HTTP 服务 + Steam API 代理
 ├─ set-key.mjs             # 加密写入 / 更换 Steam Web API Key
+├─ appinfo.mjs             # Steam appinfo 协议客户端（读取已下架游戏资料）
 ├─ data/
 │  ├─ titles.json          # 玩家称号配置（管理后台写入，已入库）
 │  └─ admin.json          # 管理员凭据哈希（不入库）
@@ -206,7 +233,8 @@ steam-web/
 │  ├─ panel.html/.css/.js  # 面板界面（弹出窗口 / 侧边栏）
 │  └─ README.md            # 安装与使用说明
 ├─ test/
-│  └─ openid.test.mjs      # Steam OpenID 登录握手的端到端测试
+│  ├─ openid.test.mjs      # Steam OpenID 登录握手的端到端测试
+│  └─ appinfo.test.mjs     # KeyValues 解析与字段抽取的单元测试
 ├─ public/
 │  ├─ index.html           # 完整版应用页面
 │  ├─ app.js               # 完整版 SPA、搜索、比价、玩家档案
