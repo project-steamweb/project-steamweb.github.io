@@ -14,9 +14,3 @@ data/admin.json
 data/app-index.json
 data/app-index.lock
 data/app-index.json.tmp
-
-# Cloudflare 隧道：二进制和令牌都不入库
-tools/cloudflared.exe
-tools/cloudflared
-tools/.tunnel-token.txt
-tools/*.log
