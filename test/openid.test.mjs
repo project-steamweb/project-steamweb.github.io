@@ -37,7 +37,7 @@ console.log('state issued       :', state.length === 32 ? 'yes' : 'NO');
 console.log('return_to captured :', new URL(returnTo).pathname === '/api/auth/callback' ? 'yes' : 'NO');
 console.log('return_to origin   :', new URL(returnTo).origin);
 
-// Steam 的身份地址必须用 http://，https:// 会被判 "Invalid claimed_id or identity"
+// Steam 的身份地址必须用 http://，且用通用占位身份 76561197960287930
 const claimedId = new URL(location).searchParams.get('openid.claimed_id') || '';
 const identityParam = new URL(location).searchParams.get('openid.identity') || '';
 const identityOk = /^http:\/\/steamcommunity\.com\/openid\/id\/\d{17}$/.test(claimedId)

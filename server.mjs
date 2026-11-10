@@ -1525,15 +1525,19 @@ const OPENID_NS = 'http://specs.openid.net/auth/2.0';
 const OPENID_ENDPOINT = `${COMMUNITY_ORIGIN}/openid/login`;
 // Steam validates the claimed_id / identity pair and rejects anything that is
 // not a real identity URL ("Invalid claimed_id or identity"). Two details
-// matter: the value must not be empty, and it must use the **http** scheme —
-// Steam's own identity URLs are http://steamcommunity.com/openid/id/<SteamID>,
-// an https:// variant is refused.
-// The default is the site owner's account; set STEAM_OPENID_CLAIMED_ID to use a
-// different SteamID (e.g. the generic 76561197960287930 Steam accepts for
-// "any account" sign-in).
+// matter: the value must use the **http** scheme (Steam's own identity URLs
+// are http://steamcommunity.com/openid/id/<SteamID>, an https:// variant is
+// refused), and it must be the **generic placeholder** Steam documents —
+// 76561197960287930 — or the exact SteamID of the account that is signed in.
+// A specific *other* account is rejected, because Steam compares the value
+// with the identity of the signed-in user.
+//
+// The generic placeholder is the default: Steam then shows the account picker
+// and returns the real identity in the reply, so anybody can sign in.
+// Override it with STEAM_OPENID_CLAIMED_ID if you want to pin one account.
 const OPENID_CLAIMED_ID = (
   process.env.STEAM_OPENID_CLAIMED_ID
-  || `http://steamcommunity.com/openid/id/${DEFAULT_OWNER_STEAM_ID}`
+  || 'http://steamcommunity.com/openid/id/76561197960287930'
 ).trim();
 // Steam echoes the identity back as http://…, but accept https:// as well.
 const steamIdFromIdentity = (value) => {
@@ -2271,7 +2275,7 @@ const server = http.createServer(async (req, res) => {
             hints.push('这次登录在 Steam 上被取消或未通过授权');
           }
           if (looksLikeClaimIdProblem) {
-            hints.push(`Steam 不接受当前请求里的 claimed_id（${OPENID_CLAIMED_ID}），它必须是 http://steamcommunity.com/openid/id/<17位SteamID> 这样的合法身份地址`);
+            hints.push(`Steam 不接受当前请求里的 claimed_id（${OPENID_CLAIMED_ID}）：它必须是 http://steamcommunity.com/openid/id/<SteamID>，且要么用 Steam 的通用占位身份 76561197960287930，要么用当前登录账号自己的 SteamID`);
           }
           if (!looksLikeDomain) {
             hints.push('Steam 不接受 IP 作为回调域名，请改用域名访问本站');
