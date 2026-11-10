@@ -2056,7 +2056,7 @@ function setSecurityHeaders(res) {
   ].join('; '));
 }
 
-const server = http.createServer(async (req, res) => {
+const requestHandler = async (req, res) => {
   setSecurityHeaders(res);
   const started = Date.now();
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
@@ -2506,7 +2506,9 @@ const server = http.createServer(async (req, res) => {
       console.log(`${req.method} ${pathname} ${res.statusCode} ${Date.now() - started}ms`);
     }
   }
-});
+};
+
+const server = http.createServer(requestHandler);
 
 server.listen(PORT, HOST, () => {
   playerTitles = loadTitles();
@@ -2519,6 +2521,18 @@ server.listen(PORT, HOST, () => {
   console.log(`  App index ${indexed} entries (next appid ${appIndex.next})\n`);
   startIndexScan();
 });
+
+// "localhost" resolves to ::1 before 127.0.0.1 on Windows, and Go clients (frpc)
+// do not fall back to the next address — they just fail to connect. So when we
+// listen on the IPv4 loopback we also listen on the IPv6 one, and a tunnel that
+// points at "localhost:8787" keeps working.
+if (HOST === '127.0.0.1' || HOST === 'localhost') {
+  const server6 = http.createServer(requestHandler);
+  server6.on('error', (error) => {
+    console.warn('[net] IPv6 回环监听失败（不影响 IPv4）:', error?.message || error);
+  });
+  server6.listen({ port: PORT, host: '::1', ipv6Only: true });
+}
 
 /* ---------------------- 应用名称索引（下架游戏可搜索） ---------------------- */
 
