@@ -75,6 +75,16 @@ node server.mjs
 > 1. **域名没登记**：在 <https://steamcommunity.com/dev/apikey> 把访问本站的域名加进这个 Key 的 **Website / Domain**；
 > 2. **回调地址不是 https**：Steam 会拒绝 `http://` 的回跳地址。如果站点前面有反向代理，它必须把对外协议告诉服务端。
 >
+> Steam 的 API Key 页面（<https://steamcommunity.com/dev/apikey>）上，填好 **Application Name / Website / Domain** 之后要再点一次「**注册我的 Steam Web API 密钥**」才会生效——只填不点，域名是不会被登记的，Steam 会在回跳时返回 `openid.mode=error`。
+>
+> 点完注册后**页面上会显示一把新的 Key**（有可能和之前的不一样）。把它交给服务端即可：
+>
+> ```bash
+> node set-key.mjs <新的32位Key>
+> ```
+>
+> 服务端会**自动热加载**密钥文件（监听 `.steam-key.enc` 的变化），换 Key 不需要重启，也不会中断网站。
+>
 > ⚠️ **登记域名的那把 Key 必须是服务器正在用的那把**。Steam 是「谁登记了这个域名，就用谁的 Key 签名回跳」——域名登记在旧 Key 下面的话，回跳签名就对不上（报错会变成签名校验失败）。管理后台的「Steam 登录自检」里有一行 **当前 Key 指纹**（如 `****B7323D`），核对一下就知道是不是同一把。
 >
 > 另外 Steam 的域名登记生效有延迟，刚改完可能要等几分钟再试。

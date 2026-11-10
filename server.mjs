@@ -1,6 +1,6 @@
 import http from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, watch as fsWatch, writeFileSync } from 'node:fs';
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -55,8 +55,30 @@ function decryptStoredKey() {
   }
 }
 
-const SERVER_KEY = (process.env.STEAM_API_KEY || decryptStoredKey() || '').trim();
+// The Steam Web API key. It normally lives encrypted in .steam-key.enc and can be
+// replaced at runtime with `node set-key.mjs <key>`; the watcher below picks the
+// new key up without a restart, so a key rotation never needs a downtime window.
+let SERVER_KEY = (process.env.STEAM_API_KEY || decryptStoredKey() || '').trim();
 const APP_VERSION = '1.5.0';
+
+function watchStoredKey() {
+  const keyFile = path.join(__dirname, '.steam-key.enc');
+  if (!existsSync(keyFile)) return;
+  let timer = null;
+  try {
+    fsWatch(keyFile, () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        const next = decryptStoredKey();
+        if (!next || next === SERVER_KEY) return;
+        SERVER_KEY = next;
+        console.log(`[key] 已热更新 Steam API Key（结尾 ${next.slice(-6).toUpperCase()}）`);
+      }, 400);
+    });
+  } catch (error) {
+    console.warn('[key] 无法监听密钥文件变化:', error?.message || error);
+  }
+}
 
 // Site titles shown after the Steam persona name. Keys are SteamID64 strings.
 // The admin panel can edit these at runtime; the list is persisted in
@@ -2473,9 +2495,10 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, HOST, () => {
   playerTitles = loadTitles();
   ensureAdminCredential();
+  watchStoredKey();
   const indexed = appIndex.load();
   console.log(`\n  Steam Atlas  http://${HOST}:${PORT}`);
-  console.log(`  Regions ${REGIONS.length} · Server API key ${SERVER_KEY ? 'configured' : 'not configured'} · v${APP_VERSION}`);
+  console.log(`  Regions ${REGIONS.length} · Server API key ${SERVER_KEY ? `configured (****${SERVER_KEY.slice(-6).toUpperCase()})` : 'not configured'} · v${APP_VERSION}`);
   console.log(`  Titles ${playerTitles.size} · Admin ${ADMIN_USERNAME} (change with ADMIN_USERNAME / ADMIN_PASSWORD)`);
   console.log(`  App index ${indexed} entries (next appid ${appIndex.next})\n`);
   startIndexScan();
