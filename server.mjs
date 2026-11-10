@@ -1576,7 +1576,10 @@ const authStates = new Map();
 // the Steam Web API key, because Steam signs the response with that key.
 // Behind a reverse proxy the public origin comes from the forwarded headers.
 function publicOrigin(req) {
-  if (process.env.PUBLIC_ORIGIN) return String(process.env.PUBLIC_ORIGIN).replace(/\/+$/, '');
+  // .env 里的 PUBLIC_ORIGIN 优先，并在运行期重新读取（改完不用重启）。
+  const fromFile = loadEnvFile({ override: false }).PUBLIC_ORIGIN;
+  const override = fromFile || process.env.PUBLIC_ORIGIN;
+  if (override) return String(override).replace(/\/+$/, '');
   const proto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim()
     || (req.socket.encrypted ? 'https' : 'http');
   const host = String(req.headers['x-forwarded-host'] || '').split(',')[0].trim()
