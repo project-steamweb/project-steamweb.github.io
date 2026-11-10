@@ -54,7 +54,7 @@ function decryptStoredKey() {
 }
 
 const SERVER_KEY = (process.env.STEAM_API_KEY || decryptStoredKey() || '').trim();
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.4.0';
 
 // Site titles shown after the Steam persona name. Keys are SteamID64 strings.
 // The admin panel can edit these at runtime; the list is persisted in
@@ -381,6 +381,10 @@ function normalizeApp(appid, data, region) {
       })),
     } : null,
     dlc: (data.dlc || []).slice(0, 40).map((id) => ({ appid: Number(id) })),
+    // For DLC / soundtracks Steam exposes the owning base game.
+    fullgame: data.fullgame?.appid
+      ? { appid: Number(data.fullgame.appid), name: String(data.fullgame.name || '') }
+      : null,
     packages,
     ratings,
     contentDescriptors: (data.content_descriptors?.ids || []).map(contentDescriptorLabel).filter(Boolean),
@@ -1102,14 +1106,27 @@ const OPENID_NS = 'http://specs.openid.net/auth/2.0';
 const OPENID_ENDPOINT = `${COMMUNITY_ORIGIN}/openid/login`;
 const OPENID_IDENTITY = 'https://steamcommunity.com/openid/id/76561197960265729';
 const SESSION_COOKIE = 'steam_atlas_sid';
+const STATE_COOKIE = 'steam_atlas_state';
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7;
 const AUTH_STATE_TTL_MS = 1000 * 60 * 10;
 
 const authSessions = new Map();
 const authStates = new Map();
 
-function parseCookies(req) {
-  const header = req.headers.cookie || '';
+// The OpenID return_to has to live on the same domain that is registered for
+// the Steam Web API key, because Steam signs the response with that key.
+// Behind a reverse proxy the public origin comes from the forwarded headers.
+function publicOrigin(req) {
+  if (process.env.PUBLIC_ORIGIN) return String(process.env.PUBLIC_ORIGIN).replace(/\/+$/, '');
+  const proto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim()
+    || (req.socket.encrypted ? 'https' : 'http');
+  const host = String(req.headers['x-forwarded-host'] || '').split(',')[0].trim()
+    || req.headers.host
+    || `127.0.0.1:${PORT}`;
+  return `${proto}://${host}`;
+}
+
+function parseCookies(req) {  const header = req.headers.cookie || '';
   const jar = {};
   for (const part of header.split(';')) {
     const index = part.indexOf('=');
@@ -1187,23 +1204,37 @@ function openIdSignatureCandidates(signed, decodedParams, rawParams) {
 function verifyOpenIdSignature(params, apiKey, rawUrl = '') {
   const signed = (params.get('openid.signed') || '').split(',').map((item) => item.trim()).filter(Boolean);
   if (!signed.length) throw new HttpError(400, 'OpenID 响应缺少签名信息', 'OPENID_INVALID');
-  for (const field of ['signed', 'claimed_id', 'identity', 'return_to', 'ns']) {
-    if (!signed.includes(field)) throw new HttpError(400, 'OpenID 签名字段不完整', 'OPENID_INVALID');
+  for (const field of ['signed', 'claimed_id', 'identity', 'ns']) {
+    if (!signed.includes(field)) throw new HttpError(400, `OpenID 签名缺少 ${field} 字段`, 'OPENID_INVALID');
   }
   const rawParams = rawQueryValues(rawUrl);
   const decoded = {};
   for (const field of signed) decoded[`openid.${field}`] = params.get(`openid.${field}`) || '';
 
   const actual = Buffer.from(params.get('openid.sig') || '');
-  const candidates = openIdSignatureCandidates(signed, decoded, rawParams);
-  for (const payload of candidates) {
-    const expected = Buffer.from(crypto.createHmac('sha1', apiKey).update(payload).digest('base64'));
-    if (expected.length === actual.length && crypto.timingSafeEqual(expected, actual)) {
-      return signed;
+  const payloads = openIdSignatureCandidates(signed, decoded, rawParams);
+  // The shared secret may be used as raw text or as decoded bytes.
+  const keys = [Buffer.from(String(apiKey), 'utf8')];
+  if (/^[0-9a-fA-F]{32,}$/.test(String(apiKey))) keys.push(Buffer.from(String(apiKey), 'hex'));
+  if (/^[A-Za-z0-9+/=]+$/.test(String(apiKey))) {
+    const decodedKey = Buffer.from(String(apiKey), 'base64');
+    if (decodedKey.length) keys.push(decodedKey);
+  }
+
+  for (const key of keys) {
+    for (const payload of payloads) {
+      const expected = Buffer.from(crypto.createHmac('sha1', key).update(payload).digest('base64'));
+      if (expected.length === actual.length && crypto.timingSafeEqual(expected, actual)) {
+        return signed;
+      }
     }
   }
-  console.warn('[auth] 签名校验失败，候选载荷数:', candidates.length, 'signed:', signed.join('|'));
-  throw new HttpError(400, 'OpenID 签名校验失败', 'OPENID_BAD_SIGNATURE');
+  console.warn('[auth] 签名校验失败，候选载荷数:', payloads.length * keys.length, 'signed:', signed.join('|'));
+  throw new HttpError(
+    400,
+    'OpenID 签名校验失败。Steam 用「回调地址所在域名注册的 Steam Web API Key」给回跳签名，若当前访问域名与 Key 的注册域名不一致就无法通过校验。',
+    'OPENID_BAD_SIGNATURE',
+  );
 }
 
 async function fetchPlayerSummary(steamId, key) {
@@ -1239,6 +1270,28 @@ function sessionCookie(token, { clear = false } = {}) {
   if (clear) parts.push('Max-Age=0');
   else parts.push(`Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`);
   return parts.join('; ');
+}
+
+// The login state is carried in its own cookie as well, so it survives even if
+// Steam rewrites the return_to query string on the way back.
+function stateCookie(state, { clear = false } = {}) {
+  const parts = [`${STATE_COOKIE}=${clear ? '' : state}`, 'Path=/', 'HttpOnly', 'SameSite=Lax'];
+  if (clear) parts.push('Max-Age=0');
+  else parts.push(`Max-Age=${Math.floor(AUTH_STATE_TTL_MS / 1000)}`);
+  return parts.join('; ');
+}
+
+// Steam may normalise the return_to URL (trailing slash, reordered query, …),
+// so bind it by origin + path and let the state provide the CSRF guarantee.
+function sameReturnTarget(a, b) {
+  if (a === b) return true;
+  try {
+    const left = new URL(a);
+    const right = new URL(b);
+    return left.origin === right.origin && left.pathname === right.pathname;
+  } catch {
+    return false;
+  }
 }
 
 /* =========================================================
@@ -1621,11 +1674,17 @@ const server = http.createServer(async (req, res) => {
 
       if (pathname === '/api/auth/login') {
         const state = crypto.randomBytes(16).toString('hex');
-        const host = req.headers.host || `127.0.0.1:${PORT}`;
-        const returnTo = new URL('/api/auth/callback', `http://${host}`);
+        const origin = publicOrigin(req);
+        const returnTo = new URL('/api/auth/callback', origin);
         returnTo.searchParams.set('state', state);
-        authStates.set(state, { returnTo: returnTo.toString(), createdAt: Date.now() });
-        res.writeHead(302, { Location: buildOpenIdUrl(returnTo.toString()), 'Cache-Control': 'no-store' });
+        authStates.set(state, { returnTo: returnTo.toString(), origin, createdAt: Date.now() });
+        res.writeHead(302, {
+          Location: buildOpenIdUrl(returnTo.toString()),
+          // The state also travels in a cookie: Steam may rewrite the
+          // return_to query string, and the cookie survives that.
+          'Set-Cookie': stateCookie(state),
+          'Cache-Control': 'no-store',
+        });
         res.end();
         return;
       }
@@ -1633,9 +1692,12 @@ const server = http.createServer(async (req, res) => {
       if (pathname === '/api/auth/callback') {
         const rawReturnTo = url.searchParams.get('openid.return_to') || '';
         // Steam echoes openid.return_to verbatim, but it may append its own
-        // query string with `?` instead of `&`. Collect every plausible
-        // spelling of our state and use the first one we actually issued.
+        // query string with `?` instead of `&`, or drop it entirely. Collect
+        // every plausible spelling of our state and use the first one we
+        // actually issued. The state cookie is the most reliable source.
         const stateCandidates = [];
+        const cookieState = parseCookies(req)[STATE_COOKIE] || '';
+        if (cookieState) stateCandidates.push(cookieState);
         const directState = url.searchParams.get('state') || '';
         if (directState) {
           stateCandidates.push(directState);
@@ -1657,12 +1719,31 @@ const server = http.createServer(async (req, res) => {
         authStates.delete(state);
         const fail = (message, code) => {
           console.warn(`[auth] login failed: ${code || 'UNKNOWN'} — ${message}`);
-          const target = new URL('/', `http://${req.headers.host || `127.0.0.1:${PORT}`}`);
+          const target = new URL('/', publicOrigin(req));
           target.searchParams.set('auth', 'error');
           target.searchParams.set('reason', message);
-          res.writeHead(302, { Location: target.toString(), 'Cache-Control': 'no-store' });
+          if (code) target.searchParams.set('code', code);
+          res.writeHead(302, {
+            Location: target.toString(),
+            'Set-Cookie': stateCookie('', { clear: true }),
+            'Cache-Control': 'no-store',
+          });
           res.end();
         };
+
+        // Log exactly what Steam sent so a failing handshake can be diagnosed.
+        console.log('[auth] openid callback', {
+          mode: url.searchParams.get('openid.mode'),
+          claimed_id: url.searchParams.get('openid.claimed_id'),
+          identity: url.searchParams.get('openid.identity'),
+          ns: url.searchParams.get('openid.ns'),
+          return_to: rawReturnTo,
+          signed: url.searchParams.get('openid.signed'),
+          sig_length: (url.searchParams.get('openid.sig') || '').length,
+          state_source: cookieState ? 'cookie' : (directState ? 'query' : 'none'),
+          state_matched: Boolean(pending),
+          state_candidates: stateCandidates.length,
+        });
 
         if (!pending || Date.now() - pending.createdAt > AUTH_STATE_TTL_MS) {
           fail('登录请求已过期，请重新发起登录', 'OPENID_STATE_EXPIRED');
@@ -1684,16 +1765,10 @@ const server = http.createServer(async (req, res) => {
           fail('OpenID 身份校验失败', 'OPENID_INVALID');
           return;
         }
-        if (returnTo !== pending.returnTo) {
+        if (returnTo && !sameReturnTarget(returnTo, pending.returnTo)) {
           fail('OpenID 返回地址校验失败', 'OPENID_RETURN_MISMATCH');
           return;
         }
-        console.log('[auth] openid response received', {
-          state: 'matched',
-          claimed_id: claimedId,
-          signed: (url.searchParams.get('openid.signed') || '').split(',').join('|'),
-          hasSignature: Boolean(url.searchParams.get('openid.sig')),
-        });
         try {
           verifyOpenIdSignature(url.searchParams, SERVER_KEY, req.url);
         } catch (error) {
@@ -1727,19 +1802,35 @@ const server = http.createServer(async (req, res) => {
           profileUrl: player.profileurl || `${COMMUNITY_ORIGIN}/profiles/${steamId}`,
           visibility: parseVisibility(null, player.communityvisibilitystate),
         });
-        const target = new URL('/', `http://${req.headers.host || `127.0.0.1:${PORT}`}`);
+        const target = new URL('/', publicOrigin(req));
         target.searchParams.set('auth', 'ok');
         res.writeHead(302, {
           Location: target.toString(),
-          'Set-Cookie': sessionCookie(token),
+          'Set-Cookie': [sessionCookie(token), stateCookie('', { clear: true })],
           'Cache-Control': 'no-store',
         });
         res.end();
         return;
       }
 
-      if (pathname === '/api/auth/session') {
-        const session = readSession(req);
+      if (pathname === '/api/auth/debug') {
+        const origin = publicOrigin(req);
+        let hostname = origin;
+        try { hostname = new URL(origin).hostname; } catch { /* keep raw */ }
+        sendJson(res, 200, {
+          callbackOrigin: origin,
+          callbackUrl: `${origin}/api/auth/callback`,
+          hostname,
+          serverKeyConfigured: Boolean(SERVER_KEY),
+          publicOriginOverride: process.env.PUBLIC_ORIGIN || null,
+          hint: 'Steam 用「回调地址域名注册的 API Key」签名回跳。'
+            + '请在 steamcommunity.com/dev/apikey 确认 Key 的 Website 域名与上面的 hostname 一致，'
+            + '并通过该域名访问本站（反向代理时设置 PUBLIC_ORIGIN 或转发 x-forwarded-host / x-forwarded-proto）。',
+        });
+        return;
+      }
+
+      if (pathname === '/api/auth/session') {        const session = readSession(req);
         sendJson(res, 200, {
           authenticated: Boolean(session),
           user: session

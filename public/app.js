@@ -798,7 +798,8 @@ function gamePage(app) {
   const region = currentRegion();
   const image = safeUrl(app.backgroundImage || app.headerImage);
   const short = app.shortDescription || '';
-  const typeLabels = { game: '游戏', dlc: 'DLC', demo: 'Demo', mod: '模组' };
+  const typeLabels = { game: '游戏', dlc: 'DLC', demo: 'Demo', mod: '模组', soundtrack: '原声带', video: '影片', series: '系列' };
+  const fullgame = app.fullgame;
   const platforms = app.platforms || {};
   const platformLabels = [
     platforms.windows ? `<span class="platform-pill">${icon('monitor')}Windows</span>` : '',
@@ -829,6 +830,10 @@ function gamePage(app) {
         ${image ? `<img class="game-hero-bg" src="${image}" alt="" data-fallback>` : ''}
         <div class="game-hero-inner">
           <div class="game-hero-copy">
+            ${fullgame?.appid ? `
+            <a class="basegame-link" href="${gamePath(fullgame.appid)}" title="查看本体游戏 ${escapeHtml(fullgame.name || '')}">
+              ${icon('arrow-left')}<span>《${escapeHtml(fullgame.name || `App ${fullgame.appid}`)}》的可下载内容</span>
+            </a>` : ''}
             <div class="game-hero-badges">
               <span class="badge accent">${escapeHtml(typeLabels[app.type] || '游戏')}</span>
               ${app.comingSoon ? '<span class="badge orange">即将推出</span>' : app.releaseDate ? `<span class="badge">${escapeHtml(app.releaseDate)}</span>` : ''}
@@ -926,7 +931,8 @@ function gamePage(app) {
               <div class="detail-row"><dt>支持平台</dt><dd>${platformLabels || '—'}</dd></div>
               <div class="detail-row"><dt>控制器支持</dt><dd>${app.controllerSupport === 'full' ? '完整支持' : app.controllerSupport ? '部分支持' : '—'}</dd></div>
               <div class="detail-row"><dt>成就数量</dt><dd>${achievement?.total ? `${formatNumber(achievement.total)} 项` : '—'}</dd></div>
-              <div class="detail-row"><dt>DLC 数量</dt><dd>${app.dlc?.length ? `${app.dlc.length} 个` : '—'}</dd></div>              <div class="detail-row"><dt>发行版本</dt><dd>${packageList.length ? packageList.map((item) => escapeHtml(item.text)).join('<br>') : '—'}</dd></div>
+              <div class="detail-row"><dt>DLC 数量</dt><dd>${app.dlc?.length ? `${app.dlc.length} 个` : '—'}</dd></div>
+              ${fullgame?.appid ? `<div class="detail-row"><dt>本体游戏</dt><dd><a class="arrow-link" href="${gamePath(fullgame.appid)}">${escapeHtml(fullgame.name || `App ${fullgame.appid}`)} ${icon('arrow-up-right')}</a></dd></div>` : ''}              <div class="detail-row"><dt>发行版本</dt><dd>${packageList.length ? packageList.map((item) => escapeHtml(item.text)).join('<br>') : '—'}</dd></div>
               <div class="detail-row"><dt>支持语言</dt><dd>${escapeHtml((app.languageList || []).join('、') || app.languages || '—')}</dd></div>
               <div class="detail-row"><dt>年龄分级</dt><dd>${app.requiredAge ? `${app.requiredAge}+` : '—'}${app.contentDescriptors?.length ? ` · ${escapeHtml(app.contentDescriptors.join(' / '))}` : ''}</dd></div>
               <div class="detail-row"><dt>Steam App ID</dt><dd class="mono">${app.appid}</dd></div>
@@ -2040,12 +2046,17 @@ function handleAuthRedirect() {
   const auth = params.get('auth');
   if (!auth) return;
   const reason = params.get('reason') || '';
+  const code = params.get('code') || '';
   params.delete('auth');
   params.delete('reason');
+  params.delete('code');
   const query = params.toString();
   window.history.replaceState(null, '', `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`);
-  if (auth === 'ok') toast('已通过 Steam 账号登录');
-  else toast(reason || 'Steam 登录失败，请重试', 'error');
+  if (auth === 'ok') {
+    toast('已通过 Steam 账号登录');
+    return;
+  }
+  toast(`${reason || 'Steam 登录失败，请重试'}${code ? `（${code}）` : ''}`, 'error');
 }
 
 function renderRegionControls() {  if (!regionListEl) return;

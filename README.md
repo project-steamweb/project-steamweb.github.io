@@ -5,7 +5,7 @@
 
 Steam 数据查询工具，包含：
 
-- 游戏资料：简介、截图、宣传片、成就、**可下载内容（DLC 列表）**、发行版本、支持语言、配置要求、年龄分级与版权信息。
+- 游戏资料：简介、截图、宣传片、成就、**可下载内容（DLC 列表）**、**DLC 可反查本体游戏**、发行版本、支持语言、配置要求、年龄分级与版权信息。
 - 全球 16 区价格：本地定价、汇率估算、折扣与非本地货币提示。
 - 玩家档案：SteamID64、个性域名、等级、徽章、游戏库、封禁与最近游玩。
 - 隐私逐项标注：公开、仅好友可见、私密分别显示，不把受限数据伪装成无数据。
@@ -52,6 +52,24 @@ node server.mjs
 
 ## Steam 登录（OpenID 2.0）
 
+> **重要：Steam 登录要求「访问本站的域名」与「Steam Web API Key 注册的域名」一致。**
+>
+> Steam 用**该域名注册的 API Key** 对登录回跳做 HMAC-SHA1 签名。如果用 `http://127.0.0.1:8787` 这类没有注册过 Key 的地址发起登录，Steam 就没有可用的签名密钥，回跳一定无法通过校验。
+>
+> 解决办法：把本站部署到一个域名，并在 <https://steamcommunity.com/dev/apikey> 把该 Key 的 **Website / Domain** 设为这个域名，然后**用这个域名访问本站**再登录。
+>
+> 随时可以查看当前生效的回调地址：
+>
+> ```bash
+> curl http://127.0.0.1:8787/api/auth/debug
+> ```
+>
+> 反向代理部署时，服务端会读取 `x-forwarded-host` / `x-forwarded-proto` 推断对外地址，也可以直接指定：
+>
+> ```bash
+> PUBLIC_ORIGIN=https://你的域名
+> ```
+
 Steam 没有第三方 OAuth，官方登录方式是 **Steam OpenID 2.0**。本站按该协议实现：
 
 1. 点击侧边栏「Steam 登录」，服务端生成一次性 `state` 并 302 跳转到 `steamcommunity.com/openid/login`；
@@ -73,11 +91,16 @@ Steam 没有第三方 OAuth，官方登录方式是 **Steam OpenID 2.0**。本�
 - **签名编码**：分别尝试 `encodeURIComponent`、`/` 不转义、空格转 `+`、完全不转义四种写法；
 - **取值来源**：同时用解码后的参数值与原始查询串中的值参与验签；
 - **字段顺序**：既按 `openid.signed` 给出的顺序，也按字典序拼接；
-- **结尾 `&`**：两种形式都尝试。
+- **结尾 `&`**：两种形式都尝试；
+- **密钥形式**：文本、十六进制解码、Base64 解码三种字节形式都尝试。
 
 以上候选全部用同一把 API Key 做 HMAC-SHA1 校验，能匹配上的才算通过，因此兼容性处理不会削弱签名强度。
 
-另外，Steam 回跳时可能用 `?` 而不是 `&` 拼接参数，导致 `state` 被污染；服务端会同时在回调查询串和 `openid.return_to` 中查找并还原真实 `state`。
+另外，Steam 回跳时可能改写 `return_to` 的查询串（用 `?` 而不是 `&` 拼接，甚至直接丢弃）。为此服务端做了三重保障：
+
+- 登录 `state` 同时写入一个独立的 `HttpOnly` Cookie，回调时优先从 Cookie 取回；
+- `return_to` 的比对放宽为「同源 + 同路径」，不再逐字符比较；
+- 签名必需字段放宽为 `signed / claimed_id / identity / ns`，`return_to` 是否参与签名由 Steam 决定。
 
 接口：
 
@@ -86,6 +109,7 @@ Steam 没有第三方 OAuth，官方登录方式是 **Steam OpenID 2.0**。本�
 | `GET /api/auth/login` | 发起登录，跳转 Steam OpenID |
 | `GET /api/auth/callback` | 校验签名并建立会话 |
 | `GET /api/auth/session` | 读取当前登录状态 |
+| `GET /api/auth/debug` | 查看当前生效的回调地址与域名检查提示 |
 | `POST /api/auth/logout` | 退出登录 |
 | `GET /api/auth/me` | 读取登录账号的完整档案 |
 
