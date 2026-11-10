@@ -5,7 +5,7 @@
 
 Steam 数据查询工具，包含：
 
-- 游戏资料：简介、截图、宣传片、成就、DLC、发行版本、支持语言、配置要求、年龄分级与版权信息。
+- 游戏资料：简介、截图、宣传片、成就、**可下载内容（DLC 列表）**、发行版本、支持语言、配置要求、年龄分级与版权信息。
 - 全球 16 区价格：本地定价、汇率估算、折扣与非本地货币提示。
 - 玩家档案：SteamID64、个性域名、等级、徽章、游戏库、封禁与最近游玩。
 - 隐私逐项标注：公开、仅好友可见、私密分别显示，不把受限数据伪装成无数据。
@@ -201,6 +201,7 @@ steam-web/
 | `/api/featured` | Steam Store `featuredcategories` |
 | `/api/app/:id` | Steam Store `appdetails` |
 | `/api/prices/:id` | 对 16 个 `cc` 分别请求 `appdetails` |
+| `/api/dlc/:id` | 解析该游戏的 DLC 列表（名称、价格、发售日期） |
 | `/api/profile` | Steam Web API 或 `steamcommunity.com/.../?xml=1` |
 | `/api/auth/*` | Steam OpenID 2.0 + Steam Web API 校验 |
 | 汇率估算 | `open.er-api.com`，失败时回退 `frankfurter.app` |

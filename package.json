@@ -1,6 +1,6 @@
 {
   "name": "steam-atlas",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "private": true,
   "type": "module",
   "description": "Steam Atlas · 蒸汽图鉴：Steam 游戏资料、全球 16 区价格、玩家公开档案查询、Steam 登录、管理后台与浏览器扩展",

@@ -54,7 +54,7 @@ function decryptStoredKey() {
 }
 
 const SERVER_KEY = (process.env.STEAM_API_KEY || decryptStoredKey() || '').trim();
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.3.0';
 
 // Site titles shown after the Steam persona name. Keys are SteamID64 strings.
 // The admin panel can edit these at runtime; the list is persisted in
@@ -380,7 +380,7 @@ function normalizeApp(appid, data, region) {
         hidden: Boolean(item.hidden),
       })),
     } : null,
-    dlc: (data.dlc || []).slice(0, 12).map((id) => ({ appid: Number(id) })),
+    dlc: (data.dlc || []).slice(0, 40).map((id) => ({ appid: Number(id) })),
     packages,
     ratings,
     contentDescriptors: (data.content_descriptors?.ids || []).map(contentDescriptorLabel).filter(Boolean),
@@ -393,6 +393,58 @@ function normalizeApp(appid, data, region) {
     storeUrl: `${STORE_ORIGIN}/app/${appid}`,
     region: { cc: region.cc, code: region.code, name: region.name, currency: region.currency },
   };
+}
+
+async function getDlcList(appid, cc, language = STORE_LANGUAGE) {
+  const cacheKey = `dlc:${appid}:${cc}`;
+  const cached = cacheGet(cacheKey);
+  if (cached) return cached;
+
+  const region = REGION_BY_CC.get(cc) || REGION_BY_CC.get('cn');
+  const parent = await getAppData(appid, region.cc, language);
+  const ids = (parent.dlc || []).map((item) => item.appid).filter(Boolean);
+
+  if (!ids.length) {
+    const empty = { appid, cc: region.cc, currency: region.currency, total: 0, items: [] };
+    cacheSet(cacheKey, empty, 10 * 60 * 1000);
+    return empty;
+  }
+
+  const items = await mapLimit(ids, 5, async (dlcAppid) => {
+    try {
+      const url = new URL(`${STORE_ORIGIN}/api/appdetails`);
+      url.searchParams.set('appids', String(dlcAppid));
+      url.searchParams.set('cc', region.cc);
+      url.searchParams.set('l', language);
+      const json = await fetchJson(url.toString(), { timeout: 10000, retries: 0, headers: STORE_HEADERS });
+      const entry = json?.[String(dlcAppid)];
+      if (!entry || entry.success !== true || !entry.data) return null;
+      const data = entry.data;
+      const price = normalizePrice(data.price_overview, region.currency);
+      return {
+        appid: Number(dlcAppid),
+        name: data.name || `DLC ${dlcAppid}`,
+        type: data.type || 'dlc',
+        header: data.header_image || '',
+        releaseDate: data.release_date?.date || null,
+        free: Boolean(data.is_free),
+        price,
+        storeUrl: `${STORE_ORIGIN}/app/${dlcAppid}`,
+      };
+    } catch {
+      return null;
+    }
+  });
+
+  const result = {
+    appid,
+    cc: region.cc,
+    currency: region.currency,
+    total: ids.length,
+    items: items.filter(Boolean),
+  };
+  cacheSet(cacheKey, result, 10 * 60 * 1000);
+  return result;
 }
 
 async function getAppData(appid, cc, language = STORE_LANGUAGE, { timeout = 12000, retries = 1 } = {}) {
@@ -1546,6 +1598,16 @@ const server = http.createServer(async (req, res) => {
       if (priceMatch) {
         const appid = parseAppid(priceMatch[1]);
         const result = await getRegionPrices(appid);
+        sendJson(res, 200, result);
+        return;
+      }
+
+      const dlcMatch = pathname.match(/^\/api\/dlc\/(\d{1,8})$/);
+      if (dlcMatch) {
+        const appid = parseAppid(dlcMatch[1]);
+        const cc = String(url.searchParams.get('cc') || 'cn').toLowerCase();
+        if (!REGION_BY_CC.has(cc)) throw new HttpError(400, '未知的区服代码', 'INVALID_REGION');
+        const result = await getDlcList(appid, cc, STORE_LANGUAGE);
         sendJson(res, 200, result);
         return;
       }

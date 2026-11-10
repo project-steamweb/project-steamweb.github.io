@@ -398,6 +398,54 @@ function priceText(price, isFree = false) {
   return price.finalFormatted || '—';
 }
 
+function dlcPanel(data) {
+  const items = data?.items || [];
+  const total = Number(data?.total) || items.length;
+  if (!items.length) {
+    return `
+      <section class="panel content-panel">
+        <div class="panel-title-row"><h2>可下载内容</h2><span>DLC</span></div>
+        <p class="dlc-empty">Steam 未公开该游戏的可下载内容列表（DLC 关系由发行商在商店后台配置，部分游戏不提供）。</p>
+      </section>`;
+  }
+  return `
+    <section class="panel content-panel">
+      <div class="panel-title-row"><h2>可下载内容</h2><span>DLC · ${items.length}${total > items.length ? ` / ${total}` : ''}</span></div>
+      <div class="dlc-list">
+        ${items.map((item) => `
+          <div class="dlc-row">
+            ${safeUrl(item.header) ? `<img src="${safeUrl(item.header)}" alt="${escapeHtml(item.name)} 封面" loading="lazy" data-fallback>` : '<span class="dlc-thumb"></span>'}
+            <span class="dlc-copy">
+              <b>${escapeHtml(item.name)}</b>
+              <small>${item.releaseDate ? escapeHtml(item.releaseDate) : '发售日期未知'}</small>
+            </span>
+            <span class="dlc-price">
+              ${item.free
+                ? '<span class="free">免费</span>'
+                : `<b>${escapeHtml(priceText(item.price))}</b>${item.price?.discountPercent ? `<s>${escapeHtml(item.price.initialFormatted)}</s>` : ''}`}
+            </span>
+            <span class="dlc-actions">
+              <a href="${gamePath(item.appid)}" title="查看该 DLC 的资料页">详情</a>
+              <a href="${escapeHtml(item.storeUrl)}" target="_blank" rel="noopener noreferrer" title="在 Steam 商店打开">商店</a>
+            </span>
+          </div>`).join('')}
+      </div>
+    </section>`;
+}
+
+function dlcSkeleton() {
+  return `
+    <section class="panel content-panel">
+      <div class="panel-title-row"><h2>可下载内容</h2><span>DLC</span></div>
+      <div class="dlc-list">
+        ${Array.from({ length: 3 }).map(() => `
+          <div class="dlc-row"><span class="skeleton" style="width:72px;height:34px;border-radius:6px"></span>
+          <span class="dlc-copy"><span class="skeleton sk-line" style="width:58%"></span><span class="skeleton sk-line" style="width:32%;height:8px"></span></span>
+          <span class="skeleton sk-line" style="width:56px"></span></div>`).join('')}
+      </div>
+    </section>`;
+}
+
 function platformMarkup(platforms = {}) {
   const tags = [];
   if (platforms?.windows) tags.push('<span class="platform-mini">WIN</span>');
@@ -858,6 +906,8 @@ function gamePage(app) {
             <p class="achievement-note">共 ${formatNumber(achievement.total)} 项成就，展示 Steam 首页推荐的部分成就。</p>
           </section>` : ''}
 
+          ${app.dlc?.length ? `<div id="dlc-slot">${dlcSkeleton()}</div>` : ''}
+
           ${requirementKeys.some((item) => requirementTexts[item.key]) ? `
           <section class="panel content-panel">
             <div class="panel-title-row"><h2>配置要求</h2><span>REQUIREMENTS</span></div>
@@ -876,8 +926,7 @@ function gamePage(app) {
               <div class="detail-row"><dt>支持平台</dt><dd>${platformLabels || '—'}</dd></div>
               <div class="detail-row"><dt>控制器支持</dt><dd>${app.controllerSupport === 'full' ? '完整支持' : app.controllerSupport ? '部分支持' : '—'}</dd></div>
               <div class="detail-row"><dt>成就数量</dt><dd>${achievement?.total ? `${formatNumber(achievement.total)} 项` : '—'}</dd></div>
-              <div class="detail-row"><dt>DLC 数量</dt><dd>${app.dlc?.length ? `${app.dlc.length} 个` : '—'}</dd></div>
-              <div class="detail-row"><dt>发行版本</dt><dd>${packageList.length ? packageList.map((item) => escapeHtml(item.text)).join('<br>') : '—'}</dd></div>
+              <div class="detail-row"><dt>DLC 数量</dt><dd>${app.dlc?.length ? `${app.dlc.length} 个` : '—'}</dd></div>              <div class="detail-row"><dt>发行版本</dt><dd>${packageList.length ? packageList.map((item) => escapeHtml(item.text)).join('<br>') : '—'}</dd></div>
               <div class="detail-row"><dt>支持语言</dt><dd>${escapeHtml((app.languageList || []).join('、') || app.languages || '—')}</dd></div>
               <div class="detail-row"><dt>年龄分级</dt><dd>${app.requiredAge ? `${app.requiredAge}+` : '—'}${app.contentDescriptors?.length ? ` · ${escapeHtml(app.contentDescriptors.join(' / '))}` : ''}</dd></div>
               <div class="detail-row"><dt>Steam App ID</dt><dd class="mono">${app.appid}</dd></div>
@@ -1101,6 +1150,10 @@ async function renderGame(route, token, signal) {
     (prices) => ({ prices, error: null }),
     (error) => ({ prices: null, error }),
   );
+  const dlcPromise = api(`/api/dlc/${route.appid}?cc=${encodeURIComponent(currentRegion().cc)}`, { signal }).then(
+    (dlc) => ({ dlc, error: null }),
+    (error) => ({ dlc: null, error }),
+  );
   try {
     const app = await api(`/api/app/${route.appid}?cc=${encodeURIComponent(currentRegion().cc)}`, { signal });
     if (token !== state.renderToken) return;
@@ -1115,8 +1168,7 @@ async function renderGame(route, token, signal) {
       }, 40);
     }
     // The price request runs in parallel with app details; surface it when ready.
-    pricePromise.then(({ prices, error }) => {
-      if (token !== state.renderToken) return;
+    pricePromise.then(({ prices, error }) => {      if (token !== state.renderToken) return;
       const slot = document.querySelector('#price-board-slot');
       if (!slot) return;
       if (error) {
@@ -1132,6 +1184,23 @@ async function renderGame(route, token, signal) {
           if (board) window.scrollTo({ top: board.getBoundingClientRect().top + window.scrollY - 84, behavior: 'smooth' });
         }, 80);
       }
+    });
+    // DLC names and prices resolve in the background so the page stays fast.
+    dlcPromise.then(({ dlc, error }) => {
+      if (token !== state.renderToken) return;
+      const slot = document.querySelector('#dlc-slot');
+      if (!slot) return;
+      if (error) {
+        if (isAbortError(error)) return;
+        slot.innerHTML = `
+          <section class="panel content-panel">
+            <div class="panel-title-row"><h2>可下载内容</h2><span>DLC</span></div>
+            <p class="dlc-empty">DLC 列表加载失败：${escapeHtml(error.message)}</p>
+          </section>`;
+        return;
+      }
+      slot.innerHTML = dlcPanel(dlc);
+      bindImageFallbacks(slot);
     });
   } catch (error) {
     if (isAbortError(error) || token !== state.renderToken) return;
