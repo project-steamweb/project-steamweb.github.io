@@ -29,6 +29,8 @@ const EMsg = {
   CLIENT_HELLO: 9805,
   CLIENT_LOGON: 5514,
   CLIENT_LOGON_RESPONSE: 751,
+  PICS_CHANGES_SINCE_REQUEST: 8901,
+  PICS_CHANGES_SINCE_RESPONSE: 8902,
   PICS_PRODUCT_INFO_REQUEST: 8903,
   PICS_PRODUCT_INFO_RESPONSE: 8904,
 };
@@ -792,10 +794,10 @@ export function kvToAppInfo(kv) {
 }
 
 /* ------------------------------ 对外接口 ------------------------------ */
-export async function fetchAppInfo(appid, { timeout = 20000 } = {}) {
+
+// 建立一条匿名 CM 会话（Hello → 匿名 Logon），把会话交给回调处理。
+async function withCmSession(handler, { timeout = 20000 } = {}) {
   if (cmBlocked()) return null;
-  const target = Number(appid);
-  if (!Number.isInteger(target) || target <= 0) return null;
 
   let connection = null;
   let lastError = null;
@@ -872,70 +874,228 @@ export async function fetchAppInfo(appid, { timeout = 20000 } = {}) {
     const loggedSteamId = logonResponse.header?.[1] ?? 0n;
     if (TRACE) console.log(`[appinfo:trace] 会话 ID=${sessionId} steamid=${loggedSteamId}`);
 
-    // CMsgClientPICSProductInfoRequest
-    const picsJobId = (BigInt.asUintN(63, crypto.randomBytes(8).readBigUInt64LE())) | 1n;
-    const picsHeader = Buffer.concat([
-      pbFixed64(1, loggedSteamId),
-      pbVarint(2, sessionId),
-      pbVarint(3, 0),
-      pbFixed64(10, picsJobId),
-      pbFixed64(11, 0xffffffffffffffffn),
-    ]);
-    const appEntry = Buffer.concat([
-      pbVarint(1, target), // appid
-      pbBool(3, false), // only_public_obsolete
-    ]);
-    const picsBody = Buffer.concat([
-      pbBytes(2, appEntry), // apps
-      pbBool(3, false), // meta_data_only
-    ]);
-    connection.send(protoMessage(EMsg.PICS_PRODUCT_INFO_REQUEST, picsHeader, picsBody));
-    if (TRACE) console.log(`[appinfo:trace] PICS 请求体: ${picsBody.toString('hex')}`);
-
-    const response = await connection.waitFor((m) => m.msgType === EMsg.PICS_PRODUCT_INFO_RESPONSE, 12000);
-    if (!response) {
-      console.warn(`[appinfo] ${target} 没有收到 PICS 回应`);
-      return null;
-    }
-
-    const appChunks = pbCollectField(response.body, 1);
-    const unknown = [
-      ...pbCollectVarints(response.body, 2),
-      ...pbCollectField(response.body, 2).flatMap((chunk) => pbDecodePacked(chunk)),
-    ];
-    if (TRACE) {
-      console.log(`[appinfo:trace] PICS 回应体(${response.body.length}): ${response.body.subarray(0, 48).toString('hex')}`);
-      console.log(`[appinfo:trace] PICS 条目数=${appChunks.length} 未知=${unknown.join(',') || '无'}`);
-    }
-    if (!appChunks.length) {
-      console.warn(`[appinfo] ${target} PICS 未返回资料（未知 appid：${unknown.join(',') || '无'}）`);
-      return null;
-    }
-    for (const chunk of appChunks) {
-      const info = pbDecode(chunk);
-      const buffer = info[5];
-      if (TRACE) console.log(`[appinfo:trace] AppInfo 字段: ${Object.entries(info).map(([k, v]) => `${k}=${Buffer.isBuffer(v) ? `buf(${v.length})` : String(v)}`).join(' ')}`);
-      if (!buffer?.length) continue;
-      let parsed = null;
-      try {
-        const text = buffer.toString('utf8').replace(/\0+$/, '');
-        parsed = kvToAppInfo(parseVdf(text));
-      } catch (error) {
-        console.warn('[appinfo] VDF 解析失败:', error?.message || error);
-        continue;
-      }
-      if (parsed) {
-        parsed.appid = parsed.appid || target;
-        return parsed;
-      }
-    }
-    return null;
+    return await handler(connection, { sessionId, loggedSteamId });
   } catch (error) {
     console.warn('[appinfo] 读取失败:', error?.message || error);
     return null;
   } finally {
     try { connection?.socket.destroy(); } catch { /* ignore */ }
   }
+}
+
+function picsHeader(sessionId, loggedSteamId, jobId) {
+  return Buffer.concat([
+    pbFixed64(1, loggedSteamId),
+    pbVarint(2, sessionId),
+    pbVarint(3, 0),
+    pbFixed64(10, jobId),
+    pbFixed64(11, 0xffffffffffffffffn),
+  ]);
+}
+
+function randomJobId() {
+  return (BigInt.asUintN(63, crypto.randomBytes(8).readBigUInt64LE())) | 1n;
+}
+
+// 在已建立的会话上发一个 PICS 产品信息请求。
+async function picsRequest(connection, session, targets) {
+  const picsBody = Buffer.concat([
+    ...targets.map((appid) => pbBytes(2, Buffer.concat([
+      pbVarint(1, appid), // appid
+      pbBool(3, false), // only_public_obsolete
+    ]))),
+    pbBool(3, false), // meta_data_only
+  ]);
+  connection.send(protoMessage(
+    EMsg.PICS_PRODUCT_INFO_REQUEST,
+    picsHeader(session.sessionId, session.loggedSteamId, randomJobId()),
+    picsBody,
+  ));
+  if (TRACE) console.log(`[appinfo:trace] PICS 请求体(${targets.length} 个): ${picsBody.toString('hex').slice(0, 160)}`);
+
+  const response = await connection.waitFor((m) => m.msgType === EMsg.PICS_PRODUCT_INFO_RESPONSE, 15000);
+  if (!response) {
+    console.warn('[appinfo] 没有收到 PICS 回应');
+    return { apps: new Map(), checked: 0, unknown: [] };
+  }
+
+  const appChunks = pbCollectField(response.body, 1);
+  const unknown = [
+    ...pbCollectVarints(response.body, 2),
+    ...pbCollectField(response.body, 2).flatMap((chunk) => pbDecodePacked(chunk)),
+  ];
+  if (TRACE) {
+    console.log(`[appinfo:trace] PICS 回应体(${response.body.length}): ${response.body.subarray(0, 48).toString('hex')}`);
+    console.log(`[appinfo:trace] PICS 条目数=${appChunks.length} 未知=${unknown.length} 个`);
+  }
+
+  const apps = new Map();
+  for (const chunk of appChunks) {
+    const info = pbDecode(chunk);
+    const buffer = info[5];
+    if (!buffer?.length) continue;
+    try {
+      const text = buffer.toString('utf8').replace(/\0+$/, '');
+      const kv = parseVdf(text);
+      const appid = Number(pick(kv?.value?.appinfo || kv?.value || {}, 'appid') || info[1] || 0);
+      if (appid) apps.set(appid, kv);
+    } catch (error) {
+      console.warn('[appinfo] VDF 解析失败:', error?.message || error);
+    }
+  }
+
+  // 服务端实际处理到的位置 = 返回的与「查无此应用」的最大编号
+  let checked = 0;
+  for (const id of apps.keys()) if (id > checked) checked = id;
+  for (const id of unknown) if (id > checked) checked = id;
+
+  return { apps, checked, unknown };
+}
+
+// 一次 PICS 请求可以批量询问多个 App ID（apps 字段是可重复的）。
+// 返回 { apps: Map<appid, 原始 VDF KeyValues>, checked: 服务端实际检查到的最大 appid, unknown: 查不到的 appid }
+//
+// 注意：服务端会截断过大的批量请求——只处理前一部分 App ID，剩下的悄悄丢掉。
+// 服务端会在 unknown_appids 里列出「查过但不存在」的编号，所以把返回的与 unknown
+// 合起来取最大值，就能知道它到底检查到哪里，调用方据此补发剩余部分。
+export async function fetchAppInfoKvBatch(appids, { timeout = 20000 } = {}) {
+  const targets = [...new Set((appids || []).map(Number))]
+    .filter((id) => Number.isInteger(id) && id > 0);
+  if (!targets.length) return { apps: new Map(), checked: 0, unknown: [] };
+
+  return (await withCmSession(async (connection, session) => {
+    return picsRequest(connection, session, targets);
+  }, { timeout })) || { apps: new Map(), checked: 0, unknown: [] };
+}
+
+// 连续问很多批，但只建立一次连接（握手一次，省掉大量往返）。
+export async function fetchAppInfoKvBatches(batches, { timeout = 20000, onBatch = null } = {}) {
+  const list = (batches || [])
+    .map((ids) => [...new Set((ids || []).map(Number))].filter((id) => Number.isInteger(id) && id > 0))
+    .filter((ids) => ids.length);
+  if (!list.length) return [];
+
+  return (await withCmSession(async (connection, session) => {
+    const results = [];
+    for (const ids of list) {
+      const result = await picsRequest(connection, session, ids);
+      results.push(result);
+      if (onBatch) onBatch(result, ids);
+    }
+    return results;
+  }, { timeout })) || [];
+}
+
+// 按 App ID 顺序连续扫描。
+//
+// 服务端处理 App ID 是有顺序的：每条连接自带一个位置，请求里给出区间的起点后，
+// 它会一直往后处理到回应塞满为止（所以一次请求实际能覆盖多少取决于数据密度）。
+// 因此这里每轮都按「上一轮处理到哪」重新给区间，确保不重不漏。
+export async function picsScan({
+  from = 1,
+  span = 300,
+  maxRequests = 100000,
+  timeout = 20000,
+  signal = null,
+  onResult = null,
+} = {}) {
+  return (await withCmSession(async (connection, session) => {
+    let cursor = Number(from) - 1;
+    let requests = 0;
+    let coveredTo = cursor;
+    const gaps = [];
+    for (;;) {
+      if (signal?.aborted) break;
+      if (requests >= maxRequests) break;
+      const ids = [];
+      for (let j = 0; j < span; j += 1) ids.push(cursor + 1 + j);
+
+      // 偶发回应超时，重试几次再放弃
+      let result = null;
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        result = await picsRequest(connection, session, ids);
+        if (result.apps.size || result.unknown.length) break;
+        if (connection.closed) break;
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
+      requests += 1;
+      if (!result) break;
+
+      // 记录这次实际覆盖到的区间：服务端是顺序处理的，
+      // 所以「返回的 + 查无此应用的」合起来就是一个连续区间。
+      let min = Infinity;
+      let max = 0;
+      for (const id of result.apps.keys()) {
+        if (id < min) min = id;
+        if (id > max) max = id;
+      }
+      for (const id of result.unknown) {
+        if (id < min) min = id;
+        if (id > max) max = id;
+      }
+      if (!Number.isFinite(min)) {
+        // 回应丢失：这段可能没被记录下来，记成缺口稍后补取
+        gaps.push([coveredTo + 1, cursor + span]);
+      } else {
+        if (min > coveredTo + 1) gaps.push([coveredTo + 1, min - 1]);
+        if (max > coveredTo) coveredTo = max;
+      }
+
+      if (onResult) onResult(result);
+      if (max > cursor) {
+        cursor = max;
+      } else if (!result.apps.size && !result.unknown.length) {
+        break; // 服务端没有任何进展
+      }
+    }
+    return { cursor: Math.max(cursor, coveredTo), requests, gaps, coveredTo };
+  }, { timeout })) || { cursor: Number(from) - 1, requests: 0, gaps: [], coveredTo: Number(from) - 1 };
+}
+
+// 列出 PICS 数据库里的全部 App ID（CMsgClientPICSChangesSinceRequest）。
+// 结构参照 SteamKit 的 CMsgClientPICSChangesSinceRequest / Response：
+//   Request:  1=since_change_number 2=send_app_info_changes 3=send_package_info_changes
+//   Response: 1=current_change_number 5=app_changes（repeated AppChange，AppChange.1=appid）
+export async function fetchPicsAppIds({ timeout = 60000, since = 0 } = {}) {
+  return (await withCmSession(async (connection, session) => {
+    const body = Buffer.concat([
+      pbVarint(1, since), // since_change_number
+      pbBool(2, true), // send_app_info_changes
+      pbBool(3, false), // send_package_info_changes
+    ]);
+    connection.send(protoMessage(
+      EMsg.PICS_CHANGES_SINCE_REQUEST,
+      picsHeader(session.sessionId, session.loggedSteamId, randomJobId()),
+      body,
+    ));
+
+    const response = await connection.waitFor((m) => m.msgType === EMsg.PICS_CHANGES_SINCE_RESPONSE, timeout);
+    if (!response) {
+      console.warn('[appinfo] 没有收到 ChangesSince 回应');
+      return null;
+    }
+    const fields = pbDecode(response.body);
+    if (TRACE) {
+      console.log(`[appinfo:trace] ChangesSince 回应体(${response.body.length}): ${response.body.toString('hex')}`);
+      console.log(`[appinfo:trace] 字段: ${JSON.stringify(Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, Buffer.isBuffer(v) ? `buf(${v.length})` : v])))}`);
+    }
+    const ids = pbCollectField(response.body, 5)
+      .map((chunk) => Number(pbDecode(chunk)[1] || 0))
+      .filter((id) => Number.isInteger(id) && id > 0);
+    const unique = [...new Set(ids)].sort((a, b) => a - b);
+    if (TRACE) console.log(`[appinfo:trace] ChangesSince 应答 ${response.body.length} 字节，解析出 ${unique.length} 个 appid`);
+    return { appids: unique, changeNumber: Number(fields[1]) || 0 };
+  }, { timeout })) || null;
+}
+
+export async function fetchAppInfo(appid, { timeout = 20000 } = {}) {
+  const target = Number(appid);
+  const { apps } = await fetchAppInfoKvBatch([target], { timeout });
+  const kv = apps.get(target);
+  if (!kv) return null;
+  const parsed = kvToAppInfo(kv);
+  if (parsed) parsed.appid = parsed.appid || target;
+  return parsed;
 }
 
 export function appInfoAvailable() {

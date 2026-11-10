@@ -6,7 +6,9 @@
 Steam 数据查询工具，包含：
 
 - 游戏资料：简介、截图、宣传片、成就、**可下载内容（DLC 列表）**、**DLC 可反查本体游戏**、发行版本、支持语言、配置要求、年龄分级与版权信息。
+- **更多社交媒体与相关链接**：自动抓取商店页面里开发者填写的 YouTube / Discord / X / Twitch / TikTok / Instagram / Facebook / Bluesky / Reddit / 微博 / 哔哩哔哩 等账号，并附上官网、支持页、Steam 社区、讨论区、创意工坊、更新记录与 **SteamDB** 入口。
 - 全球 16 区价格：本地定价、汇率估算、折扣与非本地货币提示。
+- **搜索能找到已下架游戏**：商店搜索只收录仍在售的游戏，本站自己扫描 Steam 的 App ID 空间建立名称索引，下架但资料仍在的游戏照样能搜到（结果标「已下架」）。
 - 玩家档案：SteamID64、个性域名、等级、徽章、游戏库、封禁与最近游玩。
 - **封禁记录**：VAC 封禁、**游戏封禁（Game Ban）**、社区封禁、交易封禁与距上次封禁天数，来自 Steam 官方 `ISteamUser/GetPlayerBans`。
 - **Valve 员工识别**：识别出 Valve 官方员工后，在名称后加上「Valve员工」称号，并在资料页顶部显示黄色防诈骗提醒。
@@ -222,6 +224,33 @@ Steam 对突发请求很敏感，连续密集请求会收到 403 甚至被临时
 - 整个解析结果缓存 10 分钟，重复访问几乎不产生新的请求；
 - appinfo 协议走的是 Steam 的 CM 服务器，不占用商店接口的额度。
 
+## 搜索已下架的游戏
+
+Steam 的搜索接口（`storesearch` / `search/suggest`）只收录**仍在售**的游戏，一款游戏下架后就再也搜不到；Web API 的应用列表（`IStoreService/GetAppList`）同样不含下架条目。老的 `ISteamApps/GetAppList` 已被 Valve 下线（返回 404）。
+
+但 Steam 的 appinfo（PICS）协议里仍然保留着这些游戏的资料——只要知道 App ID。
+
+所以本站自己扫一遍 App ID 空间：
+
+| 环节 | 说明 |
+| --- | --- |
+| 扫描 | 用批量 PICS 请求（一次 1000 个 App ID，约 640 个/秒）遍历 App ID 空间 |
+| 提取 | 从 VDF 资料里取名称、类型与发售日期 |
+| 存储 | 写入 `data/app-index.json`（已 gitignore，不进仓库） |
+| 检索 | 内存里按名称做「完全匹配 → 前缀匹配 → 包含匹配」三级检索 |
+| 合并 | 商店搜索结果在前，本地索引补在下架游戏后面，标「已下架」 |
+
+索引会在服务启动后于后台自动续扫（断点续扫，用锁文件避免与命令行重复跑）。也可以手动跑：
+
+```bash
+node build-index.mjs              # 从上次进度继续
+node build-index.mjs --from=1     # 从头开始
+```
+
+设 `STEAM_INDEX_SCAN=0` 可关闭后台扫描。
+
+> 已从 Steam 数据库彻底删除的游戏（Evolve 280490、Rise of the Tomb Raider 391990 等）不在 PICS 库里，索引里也不会有——这不是索引的缺陷，是 Steam 侧已经没有这份数据了。
+
 ## Valve 员工识别与防诈骗提醒
 
 Valve 员工的 Steam 资料页上会挂一条官方横幅（`profile_header_valve_employee`）和一枚 `ValveEmployee` 徽章。这个标记**只出现在 HTML 页面里**，公开档案 XML 接口不返回，因此服务端会额外抓一次资料页 HTML 来判定。
@@ -252,8 +281,11 @@ steam-web/
 ├─ server.mjs              # 零依赖 Node HTTP 服务 + Steam API 代理
 ├─ set-key.mjs             # 加密写入 / 更换 Steam Web API Key
 ├─ appinfo.mjs             # Steam appinfo 协议客户端（读取已下架游戏资料）
+├─ appindex.mjs            # App ID 名称索引（让下架游戏能被搜索到）
+├─ build-index.mjs         # 命令行扫描 App ID 空间、建立索引
 ├─ data/
 │  ├─ titles.json          # 玩家称号配置（管理后台写入，已入库）
+│  ├─ app-index.json       # App ID 名称索引（不入库，后台自动重建）
 │  └─ admin.json          # 管理员凭据哈希（不入库）
 ├─ extension/              # 浏览器扩展（Manifest V3）
 │  ├─ manifest.json        # 扩展清单

@@ -482,7 +482,7 @@ function gameCard(game, index, { rank = false } = {}) {
         <h3 class="game-card-title"><a href="${gamePath(game.appid)}">${name}</a></h3>
         <div class="game-card-meta">
           <span class="price-row">
-            ${free ? '<span class="free">免费游玩</span>' : `<b>${escapeHtml(priceText(game.price))}</b>${showInitial ? `<s>${escapeHtml(initial)}</s>` : ''}`}
+            ${game.unlisted ? '<span class="unlisted-flag">已下架</span>' : free ? '<span class="free">免费游玩</span>' : `<b>${escapeHtml(priceText(game.price))}</b>${showInitial ? `<s>${escapeHtml(initial)}</s>` : ''}`}
           </span>
           ${game.metascore ? `<span class="metascore">${escapeHtml(game.metascore)}</span>` : platformMarkup(game.platforms)}
         </div>
@@ -679,7 +679,7 @@ function searchPage(data, query) {
         <div>
           <span class="eyebrow">SEARCH / ${escapeHtml(currentRegion().code)}</span>
           <h1>搜索结果</h1>
-          <p>${query ? `关于 “${escapeHtml(query)}” 的匹配结果。` : '输入游戏名称或 App ID 开始搜索。'} 价格来自 Steam ${escapeHtml(currentRegion().name)}区。</p>
+          <p>${query ? `关于 “${escapeHtml(query)}” 的匹配结果。` : '输入游戏名称或 App ID 开始搜索。'} 价格来自 Steam ${escapeHtml(currentRegion().name)}区。标记「已下架」的结果来自 Steam 仍保留资料的已下架游戏。</p>
         </div>
         <div class="page-head-side"><b>${String(results.length).padStart(2, '0')}</b>TITLES FOUND</div>
       </div>
@@ -812,6 +812,27 @@ function availabilityBanner(app) {
     </section>`;
 }
 
+function gameLinksPanel(app) {
+  const links = Array.isArray(app.links) ? app.links : [];
+  if (!links.length) return '';
+  const groups = new Map();
+  for (const link of links) {
+    const key = link.platform || 'link';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(link);
+  }
+  return `
+    <section class="panel content-panel">
+      <div class="panel-title-row"><h2>相关链接</h2><span>LINKS · ${links.length}</span></div>
+      <div class="link-cloud">
+        ${links.map((link) => `
+          <a class="link-chip" href="${safeUrl(link.url) || '#'}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(link.label || link.platform)}">
+            ${icon('external')}<span>${escapeHtml(link.label || link.platform)}</span>
+          </a>`).join('')}
+      </div>
+    </section>`;
+}
+
 function gamePage(app) {
   const region = currentRegion();
   const image = safeUrl(app.backgroundImage || app.headerImage);
@@ -892,6 +913,8 @@ function gamePage(app) {
               ${(app.categories || []).slice(0, 6).map((category) => `<span class="tag">${escapeHtml(category)}</span>`).join('')}
             </div>
           </section>
+
+          ${gameLinksPanel(app)}
 
           ${app.screenshots?.length ? `
           <section class="panel content-panel">
@@ -1784,8 +1807,8 @@ function bindSearchForms(root) {
           ${data.results.slice(0, 6).map((game, index) => `
             <button class="suggest-item" type="button" data-suggest-index="${index}">
               ${safeUrl(game.image) ? `<img src="${safeUrl(game.image)}" alt="" loading="lazy">` : ''}
-              <span class="suggest-copy"><b>${escapeHtml(game.name)}</b><small>APP ${game.appid}${game.releaseDate ? ` · ${escapeHtml(game.releaseDate)}` : ''}</small></span>
-              <span class="suggest-price">${escapeHtml(priceText(game.price, game.isFree))}</span>
+              <span class="suggest-copy"><b>${escapeHtml(game.name)}</b><small>APP ${game.appid}${game.releaseDate ? ` · ${escapeHtml(game.releaseDate)}` : ''}${game.unlisted ? ' · 已下架' : ''}</small></span>
+              <span class="suggest-price">${game.unlisted ? '<span class="unlisted-flag">已下架</span>' : escapeHtml(priceText(game.price, game.isFree))}</span>
             </button>`).join('')}
         </div>
         <div class="suggest-foot">

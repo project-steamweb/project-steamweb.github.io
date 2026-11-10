@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fetchAppInfo } from './appinfo.mjs';
+import { AppIndex, scanAppIndex } from './appindex.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -621,7 +622,7 @@ async function resolveAppInfoUncached(appid, cc) {
       // Steam appinfo 协议：商店完全查不到的游戏靠它补上。
       if (appInfo?.name) {
         console.log(`[app] ${appid} 通过 appinfo 取得资料：${appInfo.name}`);
-        return sparseApp(appid, {
+        const sparse = sparseApp(appid, {
           name: appInfo.localizedName || appInfo.name,
           type: appInfo.type,
           description: appInfo.description,
@@ -634,16 +635,20 @@ async function resolveAppInfoUncached(appid, cc) {
           source: 'appinfo',
           note: '该游戏未在商店公开（可能已下架或未公开），以下资料来自 Steam appinfo 协议。',
         });
+        sparse.links = buildAppLinks(appid, sparse, await fetchStoreSocialLinks(appid));
+        return sparse;
       }
 
       // Steam Web API 应用列表：至少还能给出名称。
       if (listed?.name) {
-        return sparseApp(appid, {
+        const sparse = sparseApp(appid, {
           name: listed.name,
           availability: 'webapi',
           source: 'webapi',
           note: '该游戏未在商店公开，Steam Web API 仅能提供名称与上架信息。',
         });
+        sparse.links = buildAppLinks(appid, sparse, []);
+        return sparse;
       }
 
       cacheSet(failureKey, { status: primaryError?.status || 404, message: primaryError?.message, code: primaryError?.code }, APP_FAILURE_TTL_MS);
@@ -689,12 +694,18 @@ async function getAppData(appid, cc, language = STORE_LANGUAGE, { timeout = 1200
   const key = `app:${appid}:${region.cc}:${language}`;
   return cached(key, 10 * 60 * 1000, async () => {
     const url = `${STORE_ORIGIN}/api/appdetails?appids=${encodeURIComponent(appid)}&cc=${region.cc}&l=${language}`;
-    const json = await fetchJson(url, { timeout, retries });
+    // 社交账号在商店页面 HTML 里，和资料接口并行抓取。
+    const [json, socialLinks] = await Promise.all([
+      fetchJson(url, { timeout, retries }),
+      fetchStoreSocialLinks(appid),
+    ]);
     const result = json?.[String(appid)];
     if (!result || result.success !== true || !result.data) {
       throw new HttpError(404, '没有找到这款游戏，或该地区暂不提供', 'APP_NOT_FOUND');
     }
-    return normalizeApp(appid, result.data, region);
+    const app = normalizeApp(appid, result.data, region);
+    app.links = buildAppLinks(appid, app, socialLinks);
+    return app;
   });
 }
 
@@ -704,6 +715,96 @@ function parseAppid(value) {
     throw new HttpError(400, 'App ID 格式不正确', 'INVALID_APPID');
   }
   return appid;
+}
+
+/* ---------------------- 社交媒体与社区链接 ---------------------- */
+
+// 商店页面里开发者填写的社交账号：<a class="linkbar" data-tooltip-text="真实地址">
+// <span class="social_account">平台名</span>
+const SOCIAL_HOSTS = [
+  [/(^|\.)youtube\.com$|(^|\.)youtu\.be$/i, 'YouTube'],
+  [/(^|\.)discord\.com$|(^|\.)discord\.gg$|(^|\.)discordapp\.com$/i, 'Discord'],
+  [/(^|\.)twitch\.tv$/i, 'Twitch'],
+  [/(^|\.)twitter\.com$|(^|\.)x\.com$/i, 'X'],
+  [/(^|\.)tiktok\.com$/i, 'TikTok'],
+  [/(^|\.)instagram\.com$/i, 'Instagram'],
+  [/(^|\.)facebook\.com$|(^|\.)fb\.com$/i, 'Facebook'],
+  [/(^|\.)bsky\.app$|(^|\.)bluesky\.app$/i, 'Bluesky'],
+  [/(^|\.)reddit\.com$/i, 'Reddit'],
+  [/(^|\.)vk\.com$/i, 'VK'],
+  [/(^|\.)weibo\.(com|cn)$/i, '微博'],
+  [/(^|\.)bilibili\.com$/i, '哔哩哔哩'],
+  [/(^|\.)linktr\.ee$/i, 'Linktree'],
+  [/(^|\.)patreon\.com$/i, 'Patreon'],
+  [/(^|\.)youtube-nocookie\.com$/i, 'YouTube'],
+];
+
+function socialPlatform(url) {
+  try {
+    const host = new URL(url).hostname.replace(/^www\./i, '');
+    for (const [pattern, label] of SOCIAL_HOSTS) {
+      if (pattern.test(host)) return label;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// 抓商店页面，抽出开发者填写的社交账号。
+async function fetchStoreSocialLinks(appid) {
+  return cached(`social:${appid}`, 24 * 60 * 60 * 1000, async () => {
+    try {
+      const url = `${STORE_ORIGIN}/app/${appid}/?l=${STORE_LANGUAGE}`;
+      const response = await fetch(url, {
+        headers: { 'User-Agent': BROWSER_UA, 'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8' },
+        signal: AbortSignal.timeout(12000),
+      });
+      if (!response.ok) return [];
+      const html = await response.text();
+      const links = [];
+      const seen = new Set();
+      const pattern = /<a\b[^>]*class="linkbar"[^>]*data-tooltip-text="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
+      for (const match of html.matchAll(pattern)) {
+        const rawUrl = decodeEntities(match[1].trim());
+        const platform = socialPlatform(rawUrl);
+        if (!platform) continue;
+        const labelMatch = match[2].match(/<span class="social_account">([^<]*)<\/span>/);
+        const label = (labelMatch?.[1] || platform).trim();
+        if (!rawUrl || seen.has(rawUrl)) continue;
+        seen.add(rawUrl);
+        links.push({ platform, label, url: rawUrl });
+      }
+      return links;
+    } catch {
+      return [];
+    }
+  });
+}
+
+// 组装游戏页上的「相关链接」：社交账号 + Steam 社区 + SteamDB + 官网 + 支持页。
+function buildAppLinks(appid, app, socialLinks) {
+  const links = [];
+  const push = (platform, label, url) => {
+    if (!url) return;
+    try {
+      const safe = new URL(url);
+      if (safe.protocol !== 'http:' && safe.protocol !== 'https:') return;
+    } catch {
+      return;
+    }
+    links.push({ platform, label, url });
+  };
+
+  for (const social of socialLinks || []) push(social.platform, social.label, social.url);
+  push('website', '游戏官网', app.website);
+  push('support', '支持页面', app.supportUrl);
+  push('community', 'Steam 社区', `${COMMUNITY_ORIGIN}/app/${appid}`);
+  push('discussions', '社区讨论', `${COMMUNITY_ORIGIN}/app/${appid}/discussions/`);
+  push('workshop', '创意工坊', `${COMMUNITY_ORIGIN}/app/${appid}/workshop/`);
+  push('news', '更新记录', `${STORE_ORIGIN}/news/app/${appid}`);
+  push('steamdb', 'SteamDB', `https://steamdb.info/app/${appid}/`);
+  return links;
 }
 
 async function searchGames(query, cc) {
@@ -757,6 +858,33 @@ async function searchGames(query, cc) {
         metascore: item.metascore || null,
       };
     });
+
+  // 商店搜索只覆盖仍在售的游戏；再补上本地索引里的结果，
+  // 这样已经下架（但 Steam 仍保留资料）的游戏也能被搜到。
+  const seen = new Set(results.map((item) => item.appid));
+  const indexed = appIndex.search(term, 12);
+  for (const entry of indexed) {
+    if (seen.has(entry.appid)) {
+      const hit = results.find((item) => item.appid === entry.appid);
+      if (hit) hit.inIndex = true;
+      continue;
+    }
+    if (results.length >= 16) break;
+    seen.add(entry.appid);
+    results.push({
+      appid: entry.appid,
+      name: entry.n,
+      image: `https://cdn.akamai.steamstatic.com/steam/apps/${entry.appid}/header.jpg`,
+      price: null,
+      isFree: false,
+      platforms: {},
+      metascore: null,
+      releaseDate: entry.d || '',
+      inIndex: true,
+      unlisted: true,
+    });
+  }
+
   return { query: term, results, total: json?.total || results.length };
 }
 
@@ -2212,13 +2340,63 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, HOST, () => {
   playerTitles = loadTitles();
   ensureAdminCredential();
+  const indexed = appIndex.load();
   console.log(`\n  Steam Atlas  http://${HOST}:${PORT}`);
   console.log(`  Regions ${REGIONS.length} · Server API key ${SERVER_KEY ? 'configured' : 'not configured'} · v${APP_VERSION}`);
-  console.log(`  Titles ${playerTitles.size} · Admin ${ADMIN_USERNAME} (change with ADMIN_USERNAME / ADMIN_PASSWORD)\n`);
+  console.log(`  Titles ${playerTitles.size} · Admin ${ADMIN_USERNAME} (change with ADMIN_USERNAME / ADMIN_PASSWORD)`);
+  console.log(`  App index ${indexed} entries (next appid ${appIndex.next})\n`);
+  startIndexScan();
 });
+
+/* ---------------------- 应用名称索引（下架游戏可搜索） ---------------------- */
+
+// 商店搜索只收录仍在售的游戏。appindex 会扫描 Steam 的 App ID 空间，
+// 把「App ID → 名称」存成索引，已下架但资料仍在的游戏就能被搜到。
+const appIndex = new AppIndex();
+let indexScanRunning = false;
+let indexScanAbort = null;
+
+async function startIndexScan() {
+  if (indexScanRunning) return;
+  if (String(process.env.STEAM_INDEX_SCAN || '1') === '0') return;
+  indexScanRunning = true;
+  indexScanAbort = new AbortController();
+  console.log('[index] 后台扫描 App ID 空间（STEAM_INDEX_SCAN=0 可关闭）…');
+  try {
+    const result = await scanAppIndex({
+      signal: indexScanAbort.signal,
+      workers: 3,
+      onProgress: ({ cursor, size }) => {
+        if (cursor % 100000 === 0) console.log(`[index] 已扫到 App ID ${cursor}，索引 ${size} 条`);
+      },
+    });
+    if (result.skipped) {
+      console.log('[index] 其它进程正在扫描，稍后重试');
+    } else {
+      console.log(`[index] 扫描结束：新增 ${result.added}，索引共 ${result.count} 条`);
+    }
+    // 重新载入内存索引，让新收录的名字立刻可搜
+    appIndex.load();
+  } catch (error) {
+    console.warn('[index] 扫描出错:', error?.message || error);
+  } finally {
+    indexScanRunning = false;
+    // 被别的进程占用（或中断）时，过一会儿再接着扫。
+    setTimeout(startIndexScan, 10 * 60 * 1000).unref();
+  }
+}
+
+// 索引可能由命令行进程在写，定期重新载入内存里的那份。
+setInterval(() => {
+  try {
+    const size = appIndex.load();
+    if (size) console.log(`[index] 已重载索引：${size} 条`);
+  } catch { /* ignore */ }
+}, 5 * 60 * 1000).unref();
 
 function shutdown(signal) {
   console.log(`\n${signal} received, closing server…`);
+  try { indexScanAbort?.abort(); } catch { /* ignore */ }
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(1), 4000).unref();
 }

@@ -1140,6 +1140,43 @@ svg { width: 1.25em; height: 1.25em; fill: none; stroke: currentColor; stroke-wi
 .price-row b { color: var(--text); font-family: var(--font-mono); font-size: 10.5px; font-weight: 500; white-space: nowrap; }
 .price-row s { color: var(--muted-2); font-family: var(--font-mono); font-size: 8px; white-space: nowrap; }
 .price-row .free { color: var(--accent); font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.06em; }
+/* 已下架（商店里搜不到，但 Steam 仍保留资料） */
+.unlisted-flag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  border: 1px solid rgba(255, 180, 107, 0.35);
+  border-radius: 4px;
+  background: rgba(120, 62, 8, 0.3);
+  color: var(--orange);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+/* 游戏页「相关链接」 */
+.link-cloud { display: flex; flex-wrap: wrap; gap: 8px; }
+.link-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 11px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--muted);
+  font-size: 11px;
+  text-decoration: none;
+  transition: border-color 0.18s ease, color 0.18s ease, background 0.18s ease;
+}
+.link-chip svg { width: 12px; height: 12px; flex: none; opacity: 0.7; }
+.link-chip:hover {
+  border-color: rgba(110, 231, 200, 0.32);
+  background: rgba(110, 231, 200, 0.08);
+  color: var(--text);
+}
+.link-chip:hover svg { opacity: 1; color: var(--accent); }
 .platforms { display: flex; align-items: center; gap: 4px; color: var(--muted-2); }
 .platforms svg { width: 10px; height: 10px; }
 .platform-mini {
