@@ -60,7 +60,7 @@ function signResponse(returnToValue, { tamper = false, encoder = 'standard' } = 
     response_nonce: '2026-11-10T00:00:00Zabcdef',
     assoc_handle: '1234567890',
     sig: '',
-    signed: 'signed,op_endpoint,claimed_id,identity,return_to,response_nonce,assoc_handle,ns',
+    signed: 'signed,op_endpoint,claimed_id,identity,return_to,response_nonce,assoc_handle',
   };
   if (tamper) fields.claimed_id = 'https://steamcommunity.com/openid/id/76561198000000000';
   const encoders = {

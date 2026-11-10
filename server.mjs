@@ -1673,7 +1673,10 @@ function openIdSignatureCandidates(signed, decodedParams, rawParams) {
 function verifyOpenIdSignature(params, apiKey, rawUrl = '') {
   const signed = (params.get('openid.signed') || '').split(',').map((item) => item.trim()).filter(Boolean);
   if (!signed.length) throw new HttpError(400, 'OpenID 响应缺少签名信息', 'OPENID_INVALID');
-  for (const field of ['signed', 'claimed_id', 'identity', 'ns']) {
+  // Steam signs: signed,op_endpoint,claimed_id,identity,return_to,response_nonce,assoc_handle
+  // — OpenID 2.0 does not sign "ns" (the standard namespace is implied), so it
+  // must not be required here.
+  for (const field of ['signed', 'claimed_id', 'identity']) {
     if (!signed.includes(field)) throw new HttpError(400, `OpenID 签名缺少 ${field} 字段`, 'OPENID_INVALID');
   }
   const rawParams = rawQueryValues(rawUrl);
@@ -1694,11 +1697,13 @@ function verifyOpenIdSignature(params, apiKey, rawUrl = '') {
     for (const payload of payloads) {
       const expected = Buffer.from(crypto.createHmac('sha1', key).update(payload).digest('base64'));
       if (expected.length === actual.length && crypto.timingSafeEqual(expected, actual)) {
+        console.log('[auth] 签名校验通过');
         return signed;
       }
     }
   }
   console.warn('[auth] 签名校验失败，候选载荷数:', payloads.length * keys.length, 'signed:', signed.join('|'));
+  console.warn('[auth] 原始回跳 URL:', String(rawUrl || '').slice(0, 2000));
   throw new HttpError(
     400,
     'OpenID 签名校验失败。Steam 用「回调地址所在域名注册的 Steam Web API Key」给回跳签名，若当前访问域名与 Key 的注册域名不一致就无法通过校验。',

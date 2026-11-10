@@ -14,3 +14,4 @@ data/admin.json
 data/app-index.json
 data/app-index.lock
 data/app-index.json.tmp
+logs/
