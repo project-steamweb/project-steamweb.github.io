@@ -1,7 +1,7 @@
 # Steam Atlas · 蒸汽图鉴
 
 > **本项目由 AI 编写。**
-> 代码、页面、样式与文档均由 AI（DeepSeek+gpt-6-luna）根据需求生成并迭代完成，人工仅提出需求与反馈。使用或二次开发前请自行 Review 代码。
+> 代码、页面、样式与文档均由 AI（DeepSeek+gpt-6-luna+MiniMaxM3）根据需求生成并迭代完成，人工仅提出需求与反馈。使用或二次开发前请自行 Review 代码。
 
 Steam 数据查询工具，包含：
 
