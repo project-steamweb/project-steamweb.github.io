@@ -165,19 +165,20 @@ function sleep(ms) {
 }
 
 // Steam 对突发请求很敏感：短时间内大量请求会直接返回 403（整个 IP 被临时限制）。
-// 这里做两件事：给商店接口加最小间隔，并在收到 403 后进入全局冷却。
+// 这里做两件事：给商店接口加最小间隔，并在收到 403 后进入冷却。
+// 冷却按域名分别计算：Web API 的 Key 出问题不应该连带影响商店接口。
 const STEAM_REQUEST_INTERVAL_MS = 220;
 const STEAM_COOLDOWN_MS = 90 * 1000;
-let steamCooldownUntil = 0;
+const steamCooldowns = new Map();   // host -> 冷却截止时间
 let lastSteamRequestAt = 0;
 
-function steamCoolingDown() {
-  return Date.now() < steamCooldownUntil;
+function steamCoolingDown(host) {
+  return Date.now() < (steamCooldowns.get(host) || 0);
 }
 
-function enterSteamCooldown() {
-  steamCooldownUntil = Date.now() + STEAM_COOLDOWN_MS;
-  console.warn('[steam] 上游返回 403，暂停请求 60 秒以免被进一步限制');
+function enterSteamCooldown(host) {
+  steamCooldowns.set(host, Date.now() + STEAM_COOLDOWN_MS);
+  console.warn(`[steam] ${host} 返回 403，暂停该接口 ${STEAM_COOLDOWN_MS / 1000} 秒以免被进一步限制`);
 }
 
 async function throttleSteamRequest() {
@@ -188,15 +189,17 @@ async function throttleSteamRequest() {
 
 async function fetchJson(url, { timeout = 12000, retries = 1, headers = STORE_HEADERS } = {}) {
   let lastError;
+  let host = '';
+  try { host = new URL(url).hostname; } catch { /* ignore */ }
   for (let attempt = 0; attempt <= retries; attempt += 1) {
     try {
-      if (steamCoolingDown()) {
+      if (steamCoolingDown(host)) {
         throw new HttpError(503, 'Steam 暂时限制了请求频率，请稍后再试', 'STEAM_COOLDOWN');
       }
       await throttleSteamRequest();
       const response = await fetch(url, { headers, signal: AbortSignal.timeout(timeout), redirect: 'follow' });
       if (!response.ok) {
-        if (response.status === 403) enterSteamCooldown();
+        if (response.status === 403) enterSteamCooldown(host);
         if ((response.status === 429 || response.status >= 500) && attempt < retries) {
           await sleep(450 * (attempt + 1));
           continue;
