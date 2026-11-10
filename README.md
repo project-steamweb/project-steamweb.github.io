@@ -272,6 +272,7 @@ GitHub Pages 只能运行静态文件，不能运行 `server.mjs`。如需实时
 ## 安全与隐私
 
 - Steam API Key 通过 AES-256-GCM 加密存储在 `.steam-key.enc`，解密密钥在 `.steam-key.secret`；两者均已加入 `.gitignore`，不会进入仓库。
+- 更换 Key：`node set-key.mjs <32位十六进制Key>`。Key 失效或被 Steam 限流时，站点会自动降级到公开档案与 appinfo 协议，商店资料、区服价格与下架游戏搜索仍然可用。
 - 本项目不是 Valve / Steam 官方产品，与 Valve 无隶属关系。
 - 私密或仅好友可见的数据由 Steam 隐私设置决定，本站不会绕过隐私设置。
 - 区服人民币金额为公开汇率估算，实际结算以 Steam 商店为准。
