@@ -1592,13 +1592,17 @@ function parseCookies(req) {  const header = req.headers.cookie || '';
 
 function buildOpenIdUrl(returnTo) {
   const claimedId = currentClaimedId();
+  // Steam 的报错是 "Invalid claimed_id or identity"，有可能它只认其中之一，
+  // 所以这两个字段可以单独开关，方便逐种组合试（.env 里改，不用重启）。
+  const mode = String(loadEnvFile({ override: false }).STEAM_OPENID_IDENTITY_MODE
+    || process.env.STEAM_OPENID_IDENTITY_MODE || 'both').trim().toLowerCase();
   const params = new URLSearchParams({
     'openid.ns': OPENID_NS,
     'openid.mode': 'checkid_setup',
-    'openid.claimed_id': claimedId,
-    'openid.identity': claimedId,
     'openid.return_to': returnTo,
   });
+  if (mode !== 'identity') params.set('openid.claimed_id', claimedId);
+  if (mode !== 'claimed') params.set('openid.identity', claimedId);
   return `${OPENID_ENDPOINT}?${params.toString()}`;
 }
 
@@ -2403,6 +2407,8 @@ const server = http.createServer(async (req, res) => {
           callbackUrl: `${origin}/api/auth/callback`,
           hostname,
           https: isHttps,
+          claimedId: currentClaimedId(),
+          serverKey: Boolean(SERVER_KEY),
           serverKeyConfigured: Boolean(SERVER_KEY),
           publicOriginOverride: process.env.PUBLIC_ORIGIN || null,
           problems,
