@@ -1704,6 +1704,15 @@ function verifyOpenIdSignature(params, apiKey, rawUrl = '') {
   }
   console.warn('[auth] 签名校验失败，候选载荷数:', payloads.length * keys.length, 'signed:', signed.join('|'));
   console.warn('[auth] 原始回跳 URL:', String(rawUrl || '').slice(0, 2000));
+  // 把未经任何折行的原始查询串单独存一份，便于排查（控制台会按宽度折行，容易看错）。
+  try {
+    const dumpDir = path.join(__dirname, 'logs');
+    if (!existsSync(dumpDir)) mkdirSync(dumpDir, { recursive: true });
+    writeFileSync(path.join(dumpDir, 'openid-last-url.txt'), String(rawUrl || ''), 'utf8');
+    const fields = {};
+    for (const [name, value] of Object.entries(decoded)) fields[name] = value;
+    writeFileSync(path.join(dumpDir, 'openid-last-fields.json'), JSON.stringify(fields, null, 2), 'utf8');
+  } catch { /* 记录失败不影响登录流程 */ }
   throw new HttpError(
     400,
     'OpenID 签名校验失败。Steam 用「回调地址所在域名注册的 Steam Web API Key」给回跳签名，若当前访问域名与 Key 的注册域名不一致就无法通过校验。',
