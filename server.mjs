@@ -1521,7 +1521,11 @@ async function getProfile(rawInput, key) {
    ========================================================= */
 const OPENID_NS = 'http://specs.openid.net/auth/2.0';
 const OPENID_ENDPOINT = `${COMMUNITY_ORIGIN}/openid/login`;
-const OPENID_IDENTITY = 'https://steamcommunity.com/openid/id/76561197960265729';
+// claimed_id / identity must stay empty for a generic "sign in with Steam":
+// a fixed value tells Steam that only that one account may log in, and Steam
+// answers with openid.mode=error for everybody else. With an empty claimed_id
+// Steam shows the account picker and returns the real identity in the reply.
+const OPENID_IDENTITY = '';
 const SESSION_COOKIE = 'steam_atlas_sid';
 const STATE_COOKIE = 'steam_atlas_state';
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7;

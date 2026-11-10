@@ -118,6 +118,8 @@ Steam 没有第三方 OAuth，官方登录方式是 **Steam OpenID 2.0**。本�
 5. 校验通过后用 Steam Web API 拉取账号资料，写入服务端会话并下发 `HttpOnly` + `SameSite=Lax` Cookie；
 6. 前端显示头像与昵称，「退出登录」清除会话。
 
+> **为什么 `openid.claimed_id` 是空的**：`claimed_id` 表示「本次只允许这个 SteamID 登录」。填死一个 ID 的话，别的账号会在 `checkid_setup` 阶段被 Steam 直接拒绝（回跳 `openid.mode=error`）。通用登录必须留空，由 Steam 弹出账号选择，回包里再带上真实身份。
+
 安全要点：
 
 - 签名错误或 `return_to` 不匹配一律拒绝登录；
