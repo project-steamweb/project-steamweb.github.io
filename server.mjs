@@ -1537,20 +1537,29 @@ const OPENID_ENDPOINT = `${COMMUNITY_ORIGIN}/openid/login`;
 // A specific *other* account is rejected, because Steam compares the value
 // with the identity of the signed-in user.
 //
-// The generic placeholder (Steam's documented example) is used by default: Steam
-// then shows the account picker and returns the real identity in the reply, so
-// anybody can sign in.
+// The generic identity used by working Steam OpenID clients (SteamDB,
+// ProtonDB, SteamGridDB, SteamSets …) is OpenID 2.0's "identifier_select",
+// not a SteamID URL:
 //
-// STEAM_OPENID_CLAIMED_ID overrides it. The value is re-read from .env on every
-// login, so you can try another form by editing .env — no restart needed.
-const DEFAULT_CLAIMED_ID = 'https://steamcommunity.com/openid/id/76561197960287930';
+//   openid.claimed_id = http://specs.openid.net/auth/2.0/identifier_select
+//   openid.identity   = http://specs.openid.net/auth/2.0/identifier_select
+//
+// Steam then shows the account picker and returns the real identity
+// (https://steamcommunity.com/openid/id/<SteamID>) in the id_res reply.
+// A SteamID URL as the claimed_id is rejected with
+// "Invalid claimed_id or identity".
+//
+// STEAM_OPENID_CLAIMED_ID overrides it and is re-read from .env on every
+// login, so another form can be tried without a restart.
+const DEFAULT_CLAIMED_ID = 'http://specs.openid.net/auth/2.0/identifier_select';
 function currentClaimedId() {
   // .env 里的值优先（它是可以在运行期改的），没有才用进程环境变量。
   const fromFile = loadEnvFile({ override: false }).STEAM_OPENID_CLAIMED_ID;
   const value = String(fromFile || process.env.STEAM_OPENID_CLAIMED_ID || DEFAULT_CLAIMED_ID).trim();
   return value;
 }
-// Steam echoes the identity back as http://…, but accept https:// as well.
+// Steam echoes the identity back as https://steamcommunity.com/openid/id/<SteamID>,
+// but accept the http:// form as well.
 const steamIdFromIdentity = (value) => {
   const match = /^https?:\/\/steamcommunity\.com\/openid\/id\/(\d{17})$/i.exec(String(value || '').trim());
   return match ? match[1] : '';
@@ -2293,9 +2302,7 @@ const server = http.createServer(async (req, res) => {
             hints.push('这次登录在 Steam 上被取消或未通过授权');
           }
           if (looksLikeClaimIdProblem) {
-            // Steam 只有在能按 return_to 的域名找到 API Key 时才会完成握手，
-            // 找不到时它会回这句误导性的 "Invalid claimed_id or identity"。
-            hints.push(`Steam 拒绝了身份校验（Invalid claimed_id or identity）：这两种情况都会触发它 —— ① claimed_id 必须是 Steam 认可的身份地址（当前用的是 ${currentClaimedId()}，常见写法是 http://steamcommunity.com/openid/id/<SteamID>，通用占位身份 76561197960287930）；② Steam 必须能按回跳域名「${host}」找到这把 API Key，所以请在 API Key 页面把「网站域名」(Website) 填成 ${host}，「域名名称」(Domain) 也填上，然后点「注册我的 Steam Web API 密钥」`);
+            hints.push(`Steam 拒绝了身份校验（Invalid claimed_id or identity）：claimed_id 必须是 OpenID 2.0 的通用身份 http://specs.openid.net/auth/2.0/identifier_select（当前用的是 ${currentClaimedId()}）—— Steam 收到它才会弹账号选择并回传真实身份`);
           }
           if (!looksLikeDomain) {
             hints.push('Steam 不接受 IP 作为回调域名，请改用域名访问本站');

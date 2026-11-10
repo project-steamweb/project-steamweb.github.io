@@ -41,10 +41,11 @@ console.log('return_to captured :', new URL(returnTo).pathname === '/api/auth/ca
 console.log('return_to origin   :', new URL(returnTo).origin);
 console.log('return_to clean    :', new URL(returnTo).search === '' ? 'yes' : 'NO (带查询串)');
 
-// Steam 的身份地址必须用 http://，且用通用占位身份 76561197960287930
+// claimed_id 必须是 OpenID 2.0 的通用身份 identifier_select
+// （SteamDB / ProtonDB / SteamGridDB / SteamSets 都是这么发的）
 const claimedId = new URL(location).searchParams.get('openid.claimed_id') || '';
 const identityParam = new URL(location).searchParams.get('openid.identity') || '';
-const identityOk = /^http:\/\/steamcommunity\.com\/openid\/id\/\d{17}$/.test(claimedId)
+const identityOk = claimedId === 'http://specs.openid.net/auth/2.0/identifier_select'
   && claimedId === identityParam;
 console.log('claimed_id valid   :', identityOk ? 'yes' : `NO (${claimedId})`);
 
