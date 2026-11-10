@@ -1660,8 +1660,9 @@ function readSession(req) {
   return { token, ...session };
 }
 
-function sessionCookie(token, { clear = false } = {}) {
+function sessionCookie(token, { clear = false, secure = false } = {}) {
   const parts = [`${SESSION_COOKIE}=${clear ? '' : token}`, 'Path=/', 'HttpOnly', 'SameSite=Lax'];
+  if (secure) parts.push('Secure');
   if (clear) parts.push('Max-Age=0');
   else parts.push(`Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`);
   return parts.join('; ');
@@ -1669,8 +1670,9 @@ function sessionCookie(token, { clear = false } = {}) {
 
 // The login state is carried in its own cookie as well, so it survives even if
 // Steam rewrites the return_to query string on the way back.
-function stateCookie(state, { clear = false } = {}) {
+function stateCookie(state, { clear = false, secure = false } = {}) {
   const parts = [`${STATE_COOKIE}=${clear ? '' : state}`, 'Path=/', 'HttpOnly', 'SameSite=Lax'];
+  if (secure) parts.push('Secure');
   if (clear) parts.push('Max-Age=0');
   else parts.push(`Max-Age=${Math.floor(AUTH_STATE_TTL_MS / 1000)}`);
   return parts.join('; ');
@@ -2131,7 +2133,7 @@ const server = http.createServer(async (req, res) => {
           Location: buildOpenIdUrl(returnTo.toString()),
           // The state also travels in a cookie: Steam may rewrite the
           // return_to query string, and the cookie survives that.
-          'Set-Cookie': stateCookie(state),
+          'Set-Cookie': stateCookie(state, { secure: origin.startsWith('https://') }),
           'Cache-Control': 'no-store',
         });
         res.end();
@@ -2174,7 +2176,7 @@ const server = http.createServer(async (req, res) => {
           if (code) target.searchParams.set('code', code);
           res.writeHead(302, {
             Location: target.toString(),
-            'Set-Cookie': stateCookie('', { clear: true }),
+            'Set-Cookie': stateCookie('', { clear: true, secure: publicOrigin(req).startsWith('https://') }),
             'Cache-Control': 'no-store',
           });
           res.end();
@@ -2208,10 +2210,20 @@ const server = http.createServer(async (req, res) => {
           const isIpLike = /^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host === 'localhost' || host === '::1';
           const looksLikeDomain = !isIpLike
             && /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i.test(host);
+          const isHttps = origin.startsWith('https://');
+          const hints = [];
+          if (!looksLikeDomain) {
+            hints.push('Steam 不接受 IP 作为回调域名，请改用域名访问本站');
+          }
+          if (!isHttps) {
+            hints.push('回调地址必须是 https，Steam 会拒绝 http 的回跳地址');
+          }
+          hints.push(`请到 steamcommunity.com/dev/apikey 把「${host}」登记到这个 API Key 的 Website / Domain 字段`);
+          if (!isHttps) {
+            hints.push('如果浏览器里用的是 https 地址，请让反向代理转发 X-Forwarded-Proto: https，或设置 PUBLIC_ORIGIN=https://' + host);
+          }
           fail(
-            looksLikeDomain
-              ? `Steam 没有完成 OpenID 握手：请到 steamcommunity.com/dev/apikey，把「${host}」登记到这个 API Key 的 Website / Domain 字段（回调地址 ${callbackUrl}），并用这个域名访问本站。`
-              : `Steam 没有完成 OpenID 握手：Steam 不接受 IP 作为回调域名。当前访问地址是 ${origin}，请改用域名访问本站，并把该域名登记到 API Key 的 Website / Domain 字段（回调地址 ${callbackUrl}）。`,
+            `Steam 没有完成 OpenID 握手：${hints.join('；')}。（当前回调地址 ${callbackUrl}）`,
             'OPENID_INVALID',
           );
           return;
@@ -2269,7 +2281,10 @@ const server = http.createServer(async (req, res) => {
         target.searchParams.set('auth', 'ok');
         res.writeHead(302, {
           Location: target.toString(),
-          'Set-Cookie': [sessionCookie(token), stateCookie('', { clear: true })],
+          'Set-Cookie': [
+            sessionCookie(token, { secure: target.origin.startsWith('https://') }),
+            stateCookie('', { clear: true, secure: target.origin.startsWith('https://') }),
+          ],
           'Cache-Control': 'no-store',
         });
         res.end();
@@ -2280,12 +2295,24 @@ const server = http.createServer(async (req, res) => {
         const origin = publicOrigin(req);
         let hostname = origin;
         try { hostname = new URL(origin).hostname; } catch { /* keep raw */ }
+        const isHttps = origin.startsWith('https://');
+        const isIpLike = /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname) || hostname === 'localhost';
+        const problems = [];
+        if (!isHttps) {
+          problems.push('回调地址不是 https：Steam 会拒绝 http 的回跳地址。反向代理需要转发 X-Forwarded-Proto: https，或给服务端设置 PUBLIC_ORIGIN=https://' + hostname);
+        }
+        if (isIpLike) {
+          problems.push('当前是 IP / localhost：Steam 不接受 IP 作为回调域名，需要用域名访问本站');
+        }
+        problems.push(`请在 steamcommunity.com/dev/apikey 把「${hostname}」登记到这个 API Key 的 Website / Domain 字段`);
         sendJson(res, 200, {
           callbackOrigin: origin,
           callbackUrl: `${origin}/api/auth/callback`,
           hostname,
+          https: isHttps,
           serverKeyConfigured: Boolean(SERVER_KEY),
           publicOriginOverride: process.env.PUBLIC_ORIGIN || null,
+          problems,
           hint: 'Steam 用「回调地址域名注册的 API Key」签名回跳。'
             + '请在 steamcommunity.com/dev/apikey 确认 Key 的 Website 域名与上面的 hostname 一致，'
             + '并通过该域名访问本站（反向代理时设置 PUBLIC_ORIGIN 或转发 x-forwarded-host / x-forwarded-proto）。',

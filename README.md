@@ -62,15 +62,32 @@ node server.mjs
 >
 > 解决办法：把本站部署到一个域名，并在 <https://steamcommunity.com/dev/apikey> 把该 Key 的 **Website / Domain** 设为这个域名，然后**用这个域名访问本站**再登录。
 >
-> 随时可以查看当前生效的回调地址：
+> 随时可以查看当前生效的回调地址与自检结果：
 >
 > ```bash
 > curl http://127.0.0.1:8787/api/auth/debug
 > ```
 >
-> 登录管理后台后，「**Steam 登录自检**」面板里也会直接列出要登记到 API Key 的域名、回调地址和 `PUBLIC_ORIGIN`。
+> 登录管理后台后，「**Steam 登录自检**」面板里也会直接列出要登记到 API Key 的域名、回调地址、协议和 `PUBLIC_ORIGIN`。
 >
-> 如果 Steam 跳转回来时提示「没有完成 OpenID 握手」，说明它没有走完握手（回跳里没有 `openid.mode=id_res`）——绝大多数情况就是上面的域名没登记，提示里会写清楚该登记哪个域名。
+> 如果 Steam 跳转回来时提示「没有完成 OpenID 握手」，说明它没有走完握手（回跳里没有 `openid.mode=id_res`）——绝大多数情况是下面两件事之一，报错提示里会写清楚：
+>
+> 1. **域名没登记**：在 <https://steamcommunity.com/dev/apikey> 把访问本站的域名加进这个 Key 的 **Website / Domain**；
+> 2. **回调地址不是 https**：Steam 会拒绝 `http://` 的回跳地址。如果站点前面有反向代理，它必须把对外协议告诉服务端。
+>
+> nginx 需要转发这两个头，否则服务端会把 https 站点当成 http、回调地址就变成 `http://`：
+>
+> ```nginx
+> location / {
+>     proxy_pass http://127.0.0.1:8787;
+>     proxy_set_header Host              $host;
+>     proxy_set_header X-Forwarded-Host  $host;
+>     proxy_set_header X-Forwarded-Proto $scheme;   # ← 少了这行，回调地址就会变成 http
+>     proxy_set_header X-Real-IP         $remote_addr;
+> }
+> ```
+>
+> Caddy 用 `reverse_proxy 127.0.0.1:8787` 即可，它默认会带上 `X-Forwarded-Proto` ✓。
 >
 > 反向代理部署时，服务端会读取 `x-forwarded-host` / `x-forwarded-proto` 推断对外地址，也可以直接指定：
 >

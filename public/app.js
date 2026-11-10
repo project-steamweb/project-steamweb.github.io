@@ -1963,22 +1963,23 @@ function adminAuthPanel(debug) {
   const rows = [
     ['回调地址', debug.callbackUrl],
     ['主机名', debug.hostname],
+    ['协议', debug.https ? 'https ✓' : 'http ✗（Steam 只接受 https）'],
     ['API Key', debug.serverKeyConfigured ? '已配置' : '未配置'],
     ['PUBLIC_ORIGIN', debug.publicOriginOverride || '（未设置）'],
   ].map(([label, value]) => `
     <div class="identity-row"><span>${escapeHtml(label)}</span><b>${escapeHtml(String(value))}</b></div>`).join('');
 
-  const isIp = /^\d{1,3}(\.\d{1,3}){3}$/.test(debug.hostname || '');
+  const problems = Array.isArray(debug.problems) ? debug.problems : [];
   const status = !debug.serverKeyConfigured
     ? ['red', '未配置 Steam Web API Key，登录无法进行']
-    : isIp
-      ? ['orange', '当前是 IP 地址，Steam 不接受 IP 作为回调域名，需要用域名访问']
-      : ['blue', `请确认 API Key 的 Website / Domain 里登记了「${debug.hostname}」`];
+    : problems.length
+      ? ['orange', problems.join('；')]
+      : ['blue', '配置看起来正常，去 steamcommunity.com/dev/apikey 确认域名已登记即可'];
 
   return `
     <section class="panel admin-panel">
       <div class="panel-title-row"><h2>Steam 登录自检</h2><span>AUTH CHECK</span></div>
-      <div class="admin-hint" style="margin-bottom:12px">Steam 只有在「回调域名已登记在 API Key 里」时才会完成 OpenID 握手。下面的域名需要登记到 <code>steamcommunity.com/dev/apikey</code> 的 Website / Domain 字段。</div>
+      <div class="admin-hint" style="margin-bottom:12px">Steam 只有在「回调域名已登记在 API Key 里」且「回调地址是 https」时才会完成 OpenID 握手。</div>
       <div class="identity-list">${rows}</div>
       <div class="profile-note ${status[0] === 'red' ? 'warning' : ''}" style="margin-top:12px">${icon('info')}<span>${escapeHtml(status[1])}</span></div>
     </section>`;
