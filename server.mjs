@@ -1689,6 +1689,15 @@ function sameReturnTarget(a, b) {
   }
 }
 
+// 取出 origin 里的主机名（不含端口）。
+function hostOf(origin) {
+  try {
+    return new URL(origin).hostname;
+  } catch {
+    return '';
+  }
+}
+
 /* =========================================================
    Admin backend
    A small password protected area to inspect the server and
@@ -1722,15 +1731,26 @@ function ensureAdminCredential() {
       salt,
       iterations: ADMIN_ITERATIONS,
       hash: hashPassword(ADMIN_PASSWORD, salt),
+      source: 'env',
       updatedAt: new Date().toISOString(),
     };
-    // An explicit ADMIN_PASSWORD always wins so the operator can rotate it.
-    if (process.env.ADMIN_PASSWORD || !existsSync(ADMIN_FILE)) {
+    if (!existsSync(ADMIN_FILE)) {
       writeFileSync(ADMIN_FILE, `${JSON.stringify(payload, null, 2)}\n`);
       return;
     }
-    const current = JSON.parse(readFileSync(ADMIN_FILE, 'utf8'));
-    if (current.username !== ADMIN_USERNAME) {
+    let current = null;
+    try { current = JSON.parse(readFileSync(ADMIN_FILE, 'utf8')); } catch { current = null; }
+    if (!current || !current.hash) {
+      writeFileSync(ADMIN_FILE, `${JSON.stringify(payload, null, 2)}\n`);
+      return;
+    }
+    // 管理员在后台自己改过密码（source = ui）时，以后台的为准，
+    // 环境变量只在凭据仍然来自环境变量（source = env）时才会覆盖。
+    const changedInUi = current.source === 'ui';
+    if (changedInUi) return;
+    const envPasswordChanged = !process.env.ADMIN_PASSWORD
+      || !verifyAdminCredentials(current.username, ADMIN_PASSWORD);
+    if (current.username !== ADMIN_USERNAME || envPasswordChanged) {
       writeFileSync(ADMIN_FILE, `${JSON.stringify(payload, null, 2)}\n`);
     }
   } catch (error) {
@@ -1776,6 +1796,7 @@ function changeAdminPassword(currentPassword, newPassword) {
     salt,
     iterations: ADMIN_ITERATIONS,
     hash: hashPassword(next, salt),
+    source: 'ui',
     updatedAt: new Date().toISOString(),
   };
   writeFileSync(ADMIN_FILE, `${JSON.stringify(payload, null, 2)}\n`);
@@ -2178,7 +2199,15 @@ const server = http.createServer(async (req, res) => {
           return;
         }
         if (url.searchParams.get('openid.mode') !== 'id_res') {
-          fail('Steam 未返回有效的 OpenID 响应', 'OPENID_INVALID');
+          // Steam 只有在「回调域名已登记在 API Key 里」时才会走完握手并回传 id_res，
+          // 否则它会直接跳回一个错误页（没有 openid.mode 参数）。
+          const registered = /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(hostOf(publicOrigin(req)));
+          fail(
+            registered
+              ? 'Steam 没有完成 OpenID 握手。请确认 Steam Web API Key 的 Website / Domain 里登记了本站域名。'
+              : 'Steam 没有完成 OpenID 握手。本站用的是 IP 或本机地址，Steam 要求回调域名必须登记在 API Key 的 Website / Domain 里，请改用域名访问或先登记该域名。',
+            'OPENID_INVALID',
+          );
           return;
         }
         if (!SERVER_KEY) {
