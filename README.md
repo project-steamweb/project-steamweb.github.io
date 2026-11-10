@@ -85,4 +85,10 @@ steam-web/
 
 ## 许可证
 
-本项目采用 GPL-3.0-or-later，详见 [LICENSE](LICENSE)。
+本项目采用 **GNU General Public License v3.0（GPL-3.0-or-later）** 开源，详见 [LICENSE](LICENSE)。
+
+## 版权信息
+
+版权所有 © 2026 wangzic
+
+本项目由 AI 编写并在 GPL-3.0-or-later 协议下开源。你可以依据 GPL 协议自由使用、复制、修改和分发本项目，但衍生作品须继续遵守 GPL 协议并保留相应版权与许可证声明。
