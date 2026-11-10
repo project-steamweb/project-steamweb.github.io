@@ -140,11 +140,12 @@ function isAbortError(error) {
   return error?.name === 'AbortError';
 }
 
-async function api(path, { signal, method = 'GET' } = {}) {
+async function api(path, { signal, method = 'GET', body } = {}) {
   const headers = { Accept: 'application/json' };
+  if (body != null) headers['Content-Type'] = 'application/json';
   let response;
   try {
-    response = await fetch(path, { headers, signal, method, credentials: 'same-origin' });
+    response = await fetch(path, { headers, signal, method, body, credentials: 'same-origin' });
   } catch (error) {
     if (isAbortError(error)) throw error;
     throw new Error('无法连接本地 Steam Atlas 服务，请确认服务正在运行。');
@@ -258,6 +259,9 @@ function parseRoute() {
   if (segments[0] === 'search') {
     return { name: 'search', query: params.get('q') || '' };
   }
+  if (segments[0] === 'admin') {
+    return { name: 'admin' };
+  }
   return { name: 'notfound' };
 }
 
@@ -298,6 +302,11 @@ async function renderRoute() {
       updateActiveNav('prices');
       setBreadcrumb([{ label: '探索', href: '#/' }, { label: '全球区价' }]);
       await renderPricesLanding(token, controller.signal);
+      break;
+    case 'admin':
+      updateActiveNav('');
+      setBreadcrumb([{ label: '探索', href: '#/' }, { label: '管理后台' }]);
+      await renderAdmin(token, controller.signal);
       break;
     default:
       updateActiveNav('');
@@ -1782,6 +1791,119 @@ function updateKeyUI() {
 }
 
 /* =========================================================
+   Admin backend
+   ========================================================= */
+function adminLoginPage(message = '') {
+  return `
+    <div class="page admin-page">
+      <div class="admin-login panel">
+        <div class="panel-title-row"><h2>管理后台</h2><span>ADMIN ACCESS</span></div>
+        <p class="admin-hint">请输入管理员账号与密码。默认账号 <code>steamweb</code>，可在服务端通过 <code>ADMIN_USERNAME</code> / <code>ADMIN_PASSWORD</code> 修改。</p>
+        ${message ? `<p class="admin-error">${escapeHtml(message)}</p>` : ''}
+        <form class="admin-form" id="admin-login-form">
+          <label>账号<input type="text" name="username" autocomplete="username" required></label>
+          <label>密码<input type="password" name="password" autocomplete="current-password" required></label>
+          <button class="button primary" type="submit">${icon('shield')}登录</button>
+        </form>
+      </div>
+    </div>`;
+}
+
+function adminDashboard(stats, titles) {
+  const rows = titles.map((title, index) => `
+    <tr data-admin-title="${escapeHtml(title.steamId)}">
+      <td><input type="text" name="steamId" value="${escapeHtml(title.steamId)}" inputmode="numeric" pattern="\\d{17}" required></td>
+      <td><input type="text" name="label" value="${escapeHtml(title.label)}" maxlength="24" required></td>
+      <td>
+        <select name="color">
+          ${['crimson', 'blue', 'gold'].map((color) => `<option value="${color}" ${title.color === color ? 'selected' : ''}>${({ crimson: '深红', blue: '蓝色', gold: '金色' })[color]}</option>`).join('')}
+        </select>
+      </td>
+      <td><input type="number" name="priority" value="${escapeHtml(String(title.priority))}" min="0" max="999"></td>
+      <td><button class="admin-remove" type="button" data-action="admin-remove-title" title="删除该称号">${icon('close')}</button></td>
+    </tr>`).join('');
+
+  const statCards = [
+    ['服务版本', stats.version],
+    ['运行时长', `${Math.floor(stats.uptime / 60)} 分钟`],
+    ['Steam API Key', stats.serverKey ? '已配置' : '未配置'],
+    ['区服数量', stats.regions],
+    ['缓存条目', stats.cachedEntries],
+    ['称号数量', stats.titles],
+    ['Steam 登录会话', stats.steamSessions],
+    ['Node 版本', stats.node],
+  ].map(([label, value]) => `
+    <div class="admin-stat"><label>${escapeHtml(label)}</label><b>${escapeHtml(String(value))}</b></div>`).join('');
+
+  return `
+    <div class="page admin-page">
+      <div class="admin-head">
+        <div class="panel-title-row"><h2>管理后台</h2><span>ADMIN · ${escapeHtml(stats.username || '')}</span></div>
+        <button class="button" type="button" data-action="admin-logout">${icon('lock')}退出登录</button>
+      </div>
+
+      <section class="panel admin-panel">
+        <div class="panel-title-row"><h2>运行状态</h2><span>STATUS</span></div>
+        <div class="admin-stats">${statCards}</div>
+      </section>
+
+      <section class="panel admin-panel">
+        <div class="panel-title-row"><h2>玩家称号</h2><span>TITLES · ${titles.length}</span></div>
+        <p class="admin-hint">称号会显示在 Steam 名称后面。颜色可选深红 / 蓝色 / 金色，优先级数值越大越靠前。保存后立即生效。</p>
+        <div class="admin-table-wrap">
+          <table class="admin-table">
+            <thead><tr><th>SteamID64</th><th>称号</th><th>颜色</th><th>优先级</th><th></th></tr></thead>
+            <tbody id="admin-titles-body">${rows}</tbody>
+          </table>
+        </div>
+        <div class="admin-actions">
+          <button class="button" type="button" data-action="admin-add-title">${icon('sparkles')}添加称号</button>
+          <button class="button primary" type="button" data-action="admin-save-titles">${icon('check')}保存全部</button>
+        </div>
+      </section>
+    </div>`;
+}
+
+async function renderAdmin(token, signal) {
+  let session = null;
+  try {
+    session = await api('/api/admin/session', { signal });
+  } catch (error) {
+    setView(adminLoginPage(error.message));
+    return;
+  }
+  if (!session.authenticated) {
+    setView(adminLoginPage());
+    return;
+  }
+  try {
+    const [stats, titlesData] = await Promise.all([
+      api('/api/admin/stats', { signal }),
+      api('/api/admin/titles', { signal }),
+    ]);
+    if (token !== state.renderToken) return;
+    setView(adminDashboard({ ...stats, username: session.username }, titlesData.titles || []));
+  } catch (error) {
+    if (error.status === 401) {
+      setView(adminLoginPage('登录已失效，请重新登录'));
+      return;
+    }
+    setView(adminLoginPage(error.message));
+  }
+}
+
+function collectAdminTitles() {
+  const body = document.querySelector('#admin-titles-body');
+  if (!body) return [];
+  return [...body.querySelectorAll('tr[data-admin-title]')].map((row) => ({
+    steamId: row.querySelector('input[name="steamId"]')?.value.trim() || '',
+    label: row.querySelector('input[name="label"]')?.value.trim() || '',
+    color: row.querySelector('select[name="color"]')?.value || 'crimson',
+    priority: Number(row.querySelector('input[name="priority"]')?.value) || 0,
+  }));
+}
+
+/* =========================================================
    Steam session (OpenID login)
    ========================================================= */
 async function loadSession() {
@@ -1957,12 +2079,32 @@ function initStaticEvents() {
   document.querySelectorAll('.nav-item').forEach((item) => item.addEventListener('click', closeSidebar));
 
   document.addEventListener('click', handleDelegatedClick);
+  document.addEventListener('submit', handleDelegatedSubmit);
   document.addEventListener('keydown', handleKeydown);
   window.addEventListener('resize', () => {
     closeRegionPopover();
     if (innerWidth > 900) closeSidebar();
   });
   window.addEventListener('hashchange', renderRoute);
+}
+
+async function handleDelegatedSubmit(event) {
+  const form = event.target.closest('#admin-login-form');
+  if (!form) return;
+  event.preventDefault();
+  const data = new FormData(form);
+  const submit = form.querySelector('button[type="submit"]');
+  if (submit) { submit.disabled = true; submit.textContent = '登录中…'; }
+  try {
+    await api('/api/admin/login', {
+      method: 'POST',
+      body: JSON.stringify({ username: data.get('username'), password: data.get('password') }),
+    });
+    toast('管理员登录成功');
+    await renderAdmin(state.renderToken, state.abortController?.signal);
+  } catch (error) {
+    setView(adminLoginPage(error.message || '登录失败'));
+  }
 }
 
 async function handleDelegatedClick(event) {
@@ -2037,6 +2179,44 @@ async function handleDelegatedClick(event) {
 
   const action = target.closest('[data-action]')?.dataset.action;
   if (action === 'reload') { window.location.reload(); return; }
+  if (action === 'admin-add-title') {
+    const body = document.querySelector('#admin-titles-body');
+    if (!body) return;
+    const row = document.createElement('tr');
+    row.dataset.adminTitle = 'new';
+    row.innerHTML = `
+      <td><input type="text" name="steamId" inputmode="numeric" pattern="\\d{17}" placeholder="7656119..." required></td>
+      <td><input type="text" name="label" maxlength="24" placeholder="Owner" required></td>
+      <td><select name="color"><option value="crimson">深红</option><option value="blue">蓝色</option><option value="gold">金色</option></select></td>
+      <td><input type="number" name="priority" value="50" min="0" max="999"></td>
+      <td><button class="admin-remove" type="button" data-action="admin-remove-title" title="删除该称号">${icon('close')}</button></td>`;
+    body.append(row);
+    row.querySelector('input[name="steamId"]')?.focus();
+    return;
+  }
+  if (action === 'admin-remove-title') {
+    const row = target.closest('tr[data-admin-title]');
+    if (row) row.remove();
+    return;
+  }
+  if (action === 'admin-save-titles') {
+    const titles = collectAdminTitles();
+    if (!titles.length) { toast('至少保留一个称号', 'error'); return; }
+    try {
+      await api('/api/admin/titles', { method: 'PUT', body: JSON.stringify({ titles }) });
+      toast('称号已保存并生效');
+      renderRoute();
+    } catch (error) {
+      toast(error.message || '保存失败', 'error');
+    }
+    return;
+  }
+  if (action === 'admin-logout') {
+    try { await api('/api/admin/logout', { method: 'POST' }); } catch { /* ignore */ }
+    toast('已退出管理后台');
+    setView(adminLoginPage());
+    return;
+  }
   if (action === 'steam-login') {
     window.location.href = '/api/auth/login';
     return;

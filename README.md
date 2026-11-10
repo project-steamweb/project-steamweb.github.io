@@ -1,7 +1,7 @@
 # Steam Atlas · 蒸汽图鉴
 
 > **本项目由 AI 编写。**
-> 代码、页面、样式与文档均由 AI（DeepSeek+gpt-6-luna）根据需求生成并迭代完成，人工仅提出需求与反馈。使用或二次开发前请自行 Review 代码。
+> 代码、页面、样式与文档均由 AI（DeepSeek+gpt-6-luna+MiniMaxM3）根据需求生成并迭代完成，人工仅提出需求与反馈。使用或二次开发前请自行 Review 代码。
 
 Steam 数据查询工具，包含：
 
@@ -57,7 +57,7 @@ Steam 没有第三方 OAuth，官方登录方式是 **Steam OpenID 2.0**。本�
 1. 点击侧边栏「Steam 登录」，服务端生成一次性 `state` 并 302 跳转到 `steamcommunity.com/openid/login`；
 2. 用户在 Steam 官方页面登录并授权；
 3. Steam 带签名回跳 `/api/auth/callback`；
-4. 服务端校验 `openid.mode`、`openid.ns`、`openid.return_to`、`openid.claimed_id`，并用 **HMAC-SHA1 按 `openid.signed` 字段顺序重算签名**做恒定时间比对；
+4. 服务端校验 `openid.mode`、`openid.ns`、`openid.return_to`、`openid.claimed_id`，并用 **HMAC-SHA1 重算签名**做恒定时间比对；
 5. 校验通过后用 Steam Web API 拉取账号资料，写入服务端会话并下发 `HttpOnly` + `SameSite=Lax` Cookie；
 6. 前端显示头像与昵称，「退出登录」清除会话。
 
@@ -68,6 +68,17 @@ Steam 没有第三方 OAuth，官方登录方式是 **Steam OpenID 2.0**。本�
 - 会话只保存在服务端内存中，进程重启即失效，Cookie 只含随机令牌；
 - 校验 OpenID 签名需要服务端 Web API Key；未配置 Key 时登录会明确提示不可用。
 
+兼容性处理（Steam 与 OpenID 2.0 规范在细节上不一致，这里全部兼容）：
+
+- **签名编码**：分别尝试 `encodeURIComponent`、`/` 不转义、空格转 `+`、完全不转义四种写法；
+- **取值来源**：同时用解码后的参数值与原始查询串中的值参与验签；
+- **字段顺序**：既按 `openid.signed` 给出的顺序，也按字典序拼接；
+- **结尾 `&`**：两种形式都尝试。
+
+以上候选全部用同一把 API Key 做 HMAC-SHA1 校验，能匹配上的才算通过，因此兼容性处理不会削弱签名强度。
+
+另外，Steam 回跳时可能用 `?` 而不是 `&` 拼接参数，导致 `state` 被污染；服务端会同时在回调查询串和 `openid.return_to` 中查找并还原真实 `state`。
+
 接口：
 
 | 接口 | 说明 |
@@ -77,6 +88,49 @@ Steam 没有第三方 OAuth，官方登录方式是 **Steam OpenID 2.0**。本�
 | `GET /api/auth/session` | 读取当前登录状态 |
 | `POST /api/auth/logout` | 退出登录 |
 | `GET /api/auth/me` | 读取登录账号的完整档案 |
+
+## 管理后台
+
+访问 <http://127.0.0.1:8787/#/admin>（侧边栏也有入口）。
+
+默认账号与密码：
+
+```text
+账号：steamweb
+密码：qwerQWER1
+```
+
+建议上线前用环境变量覆盖：
+
+```bash
+ADMIN_USERNAME=你的账号
+ADMIN_PASSWORD=你的强密码
+```
+
+设置 `ADMIN_PASSWORD` 后，服务启动会用新密码重新生成凭据文件；否则使用 `data/admin.json` 中已保存的哈希。
+
+后台功能：
+
+| 区域 | 内容 |
+| --- | --- |
+| 运行状态 | 版本、运行时长、是否配置 API Key、区服数、缓存条目、登录会话数、Node 版本 |
+| 玩家称号 | 在线增删改称号（SteamID64、名称、颜色、优先级），保存后立即生效并持久化到 `data/titles.json` |
+
+安全设计：
+
+- 密码使用 **PBKDF2-SHA512（12 万次迭代 + 随机盐）** 哈希保存，明文不落盘；
+- 校验使用恒定时间比较，登录失败 10 次锁定 10 分钟；
+- 管理会话与 Steam 登录会话分离，Cookie 为 `HttpOnly` + `SameSite=Strict`，仅存服务端内存；
+- `data/admin.json` 已加入 `.gitignore`，不会进入仓库。
+
+| 接口 | 说明 |
+| --- | --- |
+| `GET /api/admin/session` | 读取后台登录状态 |
+| `POST /api/admin/login` | 账号密码登录 |
+| `POST /api/admin/logout` | 退出后台 |
+| `GET /api/admin/stats` | 服务运行状态 |
+| `GET /api/admin/titles` | 读取称号列表 |
+| `PUT /api/admin/titles` | 保存称号列表 |
 
 ## 启动本机 Steam 客户端
 
@@ -118,6 +172,9 @@ steam-web/
 ├─ index.html              # 无 Node.js 静态预览 / GitHub Pages 首页
 ├─ server.mjs              # 零依赖 Node HTTP 服务 + Steam API 代理
 ├─ set-key.mjs             # 加密写入 / 更换 Steam Web API Key
+├─ data/
+│  ├─ titles.json          # 玩家称号配置（管理后台写入，已入库）
+│  └─ admin.json          # 管理员凭据哈希（不入库）
 ├─ extension/              # 浏览器扩展（Manifest V3）
 │  ├─ manifest.json        # 扩展清单
 │  ├─ background.js        # 后台服务：代发 Steam 请求

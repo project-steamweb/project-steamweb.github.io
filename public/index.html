@@ -7,7 +7,7 @@
   <meta name="description" content="Steam Atlas：查询 Steam 游戏资料、全球 16 个区服价格，以及玩家公开档案。">
   <title>Steam Atlas · 蒸汽图鉴</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/styles.css?v=1.1.0">
+  <link rel="stylesheet" href="/styles.css?v=1.2.0">
 </head>
 <body>
   <svg class="svg-sprite" aria-hidden="true" focusable="false">
@@ -104,6 +104,10 @@
           </button>
           <button class="side-logout" id="steam-logout" type="button" data-action="steam-logout" hidden>退出登录</button>
         </div>
+        <a class="side-admin-link" href="#/admin">
+          <span class="key-icon"><svg><use href="#i-shield"></use></svg></span>
+          <span class="side-key-copy"><b>管理后台</b><small>服务状态与玩家称号</small></span>
+        </a>
         <div class="side-key">
           <span class="key-icon"><svg><use href="#i-key"></use></svg></span>
           <span class="side-key-copy"><b>Steam API</b><small id="side-key-status">公开模式</small></span>
@@ -161,7 +165,7 @@
         <div class="footer-links">
           <a href="https://github.com/project-steamweb/project-steamweb.github.io" target="_blank" rel="noopener noreferrer">GitHub 仓库 <svg><use href="#i-arrow-up-right"></use></svg></a>
           <a href="https://store.steampowered.com/" target="_blank" rel="noopener noreferrer">Steam 商店 <svg><use href="#i-arrow-up-right"></use></svg></a>
-          <span>v1.1.0</span>
+          <span>v1.2.0</span>
         </div>
       </footer>
     </div>
@@ -186,6 +190,6 @@
 
   <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="false"></div>
 
-  <script type="module" src="/app.js?v=1.1.0"></script>
+  <script type="module" src="/app.js?v=1.2.0"></script>
 </body>
 </html>

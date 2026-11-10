@@ -10,3 +10,4 @@ scratch-*.mjs
 .steam-key.*
 cdp-*.mjs
 shots/
+data/admin.json

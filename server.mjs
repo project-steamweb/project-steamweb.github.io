@@ -1,6 +1,6 @@
 import http from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -54,16 +54,19 @@ function decryptStoredKey() {
 }
 
 const SERVER_KEY = (process.env.STEAM_API_KEY || decryptStoredKey() || '').trim();
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.2.0';
 
 // Site titles shown after the Steam persona name. Keys are SteamID64 strings.
-// Add or remove entries here; the client only renders what the server returns.
-const PLAYER_TITLES = new Map([
-  ['76561199473775554', { id: 'owner', label: 'Owner', color: 'crimson', priority: 100 }],
-]);
+// The admin panel can edit these at runtime; the list is persisted in
+// data/titles.json and falls back to the defaults below.
+const DEFAULT_PLAYER_TITLES = [
+  { id: 'owner', steamId: '76561199473775554', label: 'Owner', color: 'crimson', priority: 100 },
+];
+
+let playerTitles = new Map(DEFAULT_PLAYER_TITLES.map((item) => [item.steamId, item]));
 
 function titleFor(steamId) {
-  const title = PLAYER_TITLES.get(String(steamId || ''));
+  const title = playerTitles.get(String(steamId || ''));
   return title ? { ...title } : null;
 }
 
@@ -1082,23 +1085,73 @@ function buildOpenIdUrl(returnTo) {
 // OpenID 2.0 signature: HMAC-SHA1 over the signed fields, in the exact order
 // listed by openid.signed, each rendered as `field=urlencoded(value)` joined
 // by `&`, keyed with the shared secret (the Steam Web API key).
-function verifyOpenIdSignature(params, apiKey) {
+// The OpenID 2.0 spec, Steam's own implementation and the widely used
+// reference libraries disagree on how the signed values are escaped, in which
+// order they are concatenated, and whether the raw or the decoded query value
+// is signed. We therefore compute the HMAC for every plausible variant and
+// accept a match on any of them. Every candidate is still HMAC-verified with
+// the API key, so accepting several encodings does not weaken the check.
+function rawQueryValues(rawUrl) {
+  const query = String(rawUrl || '').split('?')[1] || '';
+  const out = {};
+  for (const part of query.split('&')) {
+    if (!part) continue;
+    const index = part.indexOf('=');
+    const name = index < 0 ? part : part.slice(0, index);
+    const value = index < 0 ? '' : part.slice(index + 1);
+    try {
+      out[decodeURIComponent(name.replace(/\+/g, ' '))] = value;
+    } catch {
+      out[name] = value;
+    }
+  }
+  return out;
+}
+
+function openIdSignatureCandidates(signed, decodedParams, rawParams) {
+  const sources = [decodedParams, rawParams];
+  const encoders = [
+    (value) => encodeURIComponent(value),
+    (value) => encodeURIComponent(value).replace(/%2F/g, '/'),
+    (value) => encodeURIComponent(value).replace(/%20/g, '+'),
+    (value) => value,
+  ];
+  const orders = [signed, [...signed].sort()];
+  const candidates = [];
+  for (const source of sources) {
+    for (const order of orders) {
+      for (const encode of encoders) {
+        const payload = order
+          .map((field) => `${field}=${encode(source[`openid.${field}`] ?? '')}`)
+          .join('&');
+        candidates.push(payload);
+        candidates.push(`${payload}&`);
+      }
+    }
+  }
+  return candidates;
+}
+
+function verifyOpenIdSignature(params, apiKey, rawUrl = '') {
   const signed = (params.get('openid.signed') || '').split(',').map((item) => item.trim()).filter(Boolean);
   if (!signed.length) throw new HttpError(400, 'OpenID 响应缺少签名信息', 'OPENID_INVALID');
   for (const field of ['signed', 'claimed_id', 'identity', 'return_to', 'ns']) {
     if (!signed.includes(field)) throw new HttpError(400, 'OpenID 签名字段不完整', 'OPENID_INVALID');
   }
-  const payload = signed
-    .map((field) => `${field}=${encodeURIComponent(params.get(`openid.${field}`) || '')}`)
-    .join('&');
-  const expected = crypto.createHmac('sha1', apiKey).update(payload).digest('base64');
-  const actual = params.get('openid.sig') || '';
-  const left = Buffer.from(expected);
-  const right = Buffer.from(actual);
-  if (left.length !== right.length || !crypto.timingSafeEqual(left, right)) {
-    throw new HttpError(400, 'OpenID 签名校验失败', 'OPENID_BAD_SIGNATURE');
+  const rawParams = rawQueryValues(rawUrl);
+  const decoded = {};
+  for (const field of signed) decoded[`openid.${field}`] = params.get(`openid.${field}`) || '';
+
+  const actual = Buffer.from(params.get('openid.sig') || '');
+  const candidates = openIdSignatureCandidates(signed, decoded, rawParams);
+  for (const payload of candidates) {
+    const expected = Buffer.from(crypto.createHmac('sha1', apiKey).update(payload).digest('base64'));
+    if (expected.length === actual.length && crypto.timingSafeEqual(expected, actual)) {
+      return signed;
+    }
   }
-  return signed;
+  console.warn('[auth] 签名校验失败，候选载荷数:', candidates.length, 'signed:', signed.join('|'));
+  throw new HttpError(400, 'OpenID 签名校验失败', 'OPENID_BAD_SIGNATURE');
 }
 
 async function fetchPlayerSummary(steamId, key) {
@@ -1134,6 +1187,190 @@ function sessionCookie(token, { clear = false } = {}) {
   if (clear) parts.push('Max-Age=0');
   else parts.push(`Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`);
   return parts.join('; ');
+}
+
+/* =========================================================
+   Admin backend
+   A small password protected area to inspect the server and
+   manage the player titles shown next to Steam persona names.
+   ========================================================= */
+const DATA_DIR = path.join(__dirname, 'data');
+const ADMIN_FILE = path.join(DATA_DIR, 'admin.json');
+const TITLES_FILE = path.join(DATA_DIR, 'titles.json');
+const ADMIN_COOKIE = 'steam_atlas_admin';
+const ADMIN_SESSION_TTL_MS = 1000 * 60 * 60 * 12;
+const ADMIN_LOGIN_WINDOW_MS = 1000 * 60 * 10;
+const ADMIN_MAX_ATTEMPTS = 10;
+const ADMIN_ITERATIONS = 120000;
+
+const ADMIN_USERNAME = (process.env.ADMIN_USERNAME || 'steamweb').trim();
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'qwerQWER1';
+
+const adminSessions = new Map();
+const adminAttempts = new Map();
+
+function hashPassword(password, salt, iterations = ADMIN_ITERATIONS) {
+  return crypto.pbkdf2Sync(String(password), salt, iterations, 64, 'sha512').toString('hex');
+}
+
+function ensureAdminCredential() {
+  try {
+    if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
+    const salt = crypto.randomBytes(16).toString('hex');
+    const payload = {
+      username: ADMIN_USERNAME,
+      salt,
+      iterations: ADMIN_ITERATIONS,
+      hash: hashPassword(ADMIN_PASSWORD, salt),
+      updatedAt: new Date().toISOString(),
+    };
+    // An explicit ADMIN_PASSWORD always wins so the operator can rotate it.
+    if (process.env.ADMIN_PASSWORD || !existsSync(ADMIN_FILE)) {
+      writeFileSync(ADMIN_FILE, `${JSON.stringify(payload, null, 2)}\n`);
+      return;
+    }
+    const current = JSON.parse(readFileSync(ADMIN_FILE, 'utf8'));
+    if (current.username !== ADMIN_USERNAME) {
+      writeFileSync(ADMIN_FILE, `${JSON.stringify(payload, null, 2)}\n`);
+    }
+  } catch (error) {
+    console.error('[admin] 无法写入管理员凭据文件:', error?.message || error);
+  }
+}
+
+function verifyAdminCredentials(username, password) {
+  try {
+    const data = JSON.parse(readFileSync(ADMIN_FILE, 'utf8'));
+    if (String(username || '') !== String(data.username || '')) return false;
+    const candidate = Buffer.from(hashPassword(password || '', data.salt, data.iterations || ADMIN_ITERATIONS), 'hex');
+    const expected = Buffer.from(String(data.hash || ''), 'hex');
+    return candidate.length === expected.length && crypto.timingSafeEqual(candidate, expected);
+  } catch {
+    return false;
+  }
+}
+
+function adminAttemptBlocked(ip) {
+  const record = adminAttempts.get(ip);
+  if (!record) return false;
+  if (Date.now() - record.first > ADMIN_LOGIN_WINDOW_MS) {
+    adminAttempts.delete(ip);
+    return false;
+  }
+  return record.count >= ADMIN_MAX_ATTEMPTS;
+}
+
+function noteAdminAttempt(ip, failed) {
+  if (!failed) { adminAttempts.delete(ip); return; }
+  const record = adminAttempts.get(ip);
+  if (!record || Date.now() - record.first > ADMIN_LOGIN_WINDOW_MS) {
+    adminAttempts.set(ip, { count: 1, first: Date.now() });
+    return;
+  }
+  record.count += 1;
+}
+
+function createAdminSession(username) {
+  const token = crypto.randomBytes(24).toString('hex');
+  adminSessions.set(token, { username, createdAt: Date.now(), expiresAt: Date.now() + ADMIN_SESSION_TTL_MS });
+  return token;
+}
+
+function readAdminSession(req) {
+  const token = parseCookies(req)[ADMIN_COOKIE];
+  if (!token) return null;
+  const session = adminSessions.get(token);
+  if (!session) return null;
+  if (session.expiresAt < Date.now()) {
+    adminSessions.delete(token);
+    return null;
+  }
+  return { token, ...session };
+}
+
+function adminCookie(token, { clear = false } = {}) {
+  const parts = [`${ADMIN_COOKIE}=${clear ? '' : token}`, 'Path=/', 'HttpOnly', 'SameSite=Strict'];
+  if (clear) parts.push('Max-Age=0');
+  else parts.push(`Max-Age=${Math.floor(ADMIN_SESSION_TTL_MS / 1000)}`);
+  return parts.join('; ');
+}
+
+function requireAdmin(req) {
+  const session = readAdminSession(req);
+  if (!session) throw new HttpError(401, '需要管理员登录', 'ADMIN_UNAUTHORIZED');
+  return session;
+}
+
+function loadTitles() {
+  try {
+    if (!existsSync(TITLES_FILE)) return new Map(DEFAULT_PLAYER_TITLES.map((item) => [item.steamId, item]));
+    const raw = JSON.parse(readFileSync(TITLES_FILE, 'utf8'));
+    const list = Array.isArray(raw) ? raw : raw?.titles;
+    const map = new Map();
+    for (const item of Array.isArray(list) ? list : []) {
+      const steamId = String(item?.steamId || '').trim();
+      const label = String(item?.label || '').trim();
+      if (!/^\d{17}$/.test(steamId) || !label) continue;
+      map.set(steamId, {
+        id: String(item.id || label.toLowerCase().replace(/\s+/g, '-')).slice(0, 32),
+        steamId,
+        label: label.slice(0, 24),
+        color: ['crimson', 'blue', 'gold'].includes(item.color) ? item.color : 'crimson',
+        priority: Number(item.priority) || 0,
+      });
+    }
+    return map.size ? map : new Map(DEFAULT_PLAYER_TITLES.map((item) => [item.steamId, item]));
+  } catch {
+    return new Map(DEFAULT_PLAYER_TITLES.map((item) => [item.steamId, item]));
+  }
+}
+
+function saveTitles(list) {
+  const map = new Map();
+  for (const item of Array.isArray(list) ? list : []) {
+    const steamId = String(item?.steamId || '').trim();
+    const label = String(item?.label || '').trim();
+    if (!/^\d{17}$/.test(steamId)) throw new HttpError(400, `SteamID「${steamId || '(空)'}」格式不正确`, 'INVALID_TITLE');
+    if (!label) throw new HttpError(400, '称号名称不能为空', 'INVALID_TITLE');
+    map.set(steamId, {
+      id: String(item.id || label.toLowerCase().replace(/\s+/g, '-')).slice(0, 32),
+      steamId,
+      label: label.slice(0, 24),
+      color: ['crimson', 'blue', 'gold'].includes(item.color) ? item.color : 'crimson',
+      priority: Number(item.priority) || 0,
+    });
+  }
+  if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
+  const payload = [...map.values()].sort((a, b) => b.priority - a.priority);
+  writeFileSync(TITLES_FILE, `${JSON.stringify({ titles: payload }, null, 2)}\n`);
+  playerTitles = map;
+  return payload;
+}
+
+function readJsonBody(req, { limit = 256 * 1024 } = {}) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    req.on('data', (chunk) => {
+      size += chunk.length;
+      if (size > limit) {
+        reject(new HttpError(413, '请求体过大', 'PAYLOAD_TOO_LARGE'));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => {
+      const raw = Buffer.concat(chunks).toString('utf8');
+      if (!raw.trim()) { resolve({}); return; }
+      try {
+        resolve(JSON.parse(raw));
+      } catch {
+        reject(new HttpError(400, '请求体不是合法 JSON', 'INVALID_JSON'));
+      }
+    });
+    req.on('error', reject);
+  });
 }
 
 function sendJson(res, status, payload) {
@@ -1238,9 +1475,14 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
   const pathname = url.pathname;
   const method = req.method || 'GET';
-  const postAllowed = method === 'POST' && pathname === '/api/auth/logout';
+  const postAllowed = method === 'POST' && (
+    pathname === '/api/auth/logout'
+    || pathname === '/api/admin/login'
+    || pathname === '/api/admin/logout'
+  );
+  const putAllowed = method === 'PUT' && pathname === '/api/admin/titles';
 
-  if (!['GET', 'HEAD'].includes(method) && !postAllowed) {
+  if (!['GET', 'HEAD'].includes(method) && !postAllowed && !putAllowed) {
     sendJson(res, 405, { error: 'Method not allowed' });
     return;
   }
@@ -1328,21 +1570,36 @@ const server = http.createServer(async (req, res) => {
 
       if (pathname === '/api/auth/callback') {
         const rawReturnTo = url.searchParams.get('openid.return_to') || '';
-        // Steam echoes openid.return_to verbatim, so the state may live in the
-        // callback query string or only inside the echoed return_to URL.
-        let state = url.searchParams.get('state') || '';
-        if (!state && rawReturnTo) {
-          try { state = new URL(rawReturnTo).searchParams.get('state') || ''; } catch { state = ''; }
+        // Steam echoes openid.return_to verbatim, but it may append its own
+        // query string with `?` instead of `&`. Collect every plausible
+        // spelling of our state and use the first one we actually issued.
+        const stateCandidates = [];
+        const directState = url.searchParams.get('state') || '';
+        if (directState) {
+          stateCandidates.push(directState);
+          const cut = directState.split('?')[0];
+          if (cut && cut !== directState) stateCandidates.push(cut);
         }
+        if (rawReturnTo) {
+          try {
+            const fromReturnTo = new URL(rawReturnTo).searchParams.get('state') || '';
+            if (fromReturnTo) stateCandidates.push(fromReturnTo);
+          } catch { /* malformed return_to */ }
+        }
+        let state = '';
+        for (const candidate of stateCandidates) {
+          if (authStates.has(candidate)) { state = candidate; break; }
+        }
+        if (!state) state = stateCandidates[0] || '';
         const pending = authStates.get(state);
         authStates.delete(state);
         const fail = (message, code) => {
+          console.warn(`[auth] login failed: ${code || 'UNKNOWN'} — ${message}`);
           const target = new URL('/', `http://${req.headers.host || `127.0.0.1:${PORT}`}`);
           target.searchParams.set('auth', 'error');
           target.searchParams.set('reason', message);
           res.writeHead(302, { Location: target.toString(), 'Cache-Control': 'no-store' });
           res.end();
-          void code;
         };
 
         if (!pending || Date.now() - pending.createdAt > AUTH_STATE_TTL_MS) {
@@ -1369,8 +1626,14 @@ const server = http.createServer(async (req, res) => {
           fail('OpenID 返回地址校验失败', 'OPENID_RETURN_MISMATCH');
           return;
         }
+        console.log('[auth] openid response received', {
+          state: 'matched',
+          claimed_id: claimedId,
+          signed: (url.searchParams.get('openid.signed') || '').split(',').join('|'),
+          hasSignature: Boolean(url.searchParams.get('openid.sig')),
+        });
         try {
-          verifyOpenIdSignature(url.searchParams, SERVER_KEY);
+          verifyOpenIdSignature(url.searchParams, SERVER_KEY, req.url);
         } catch (error) {
           fail(error.message || 'OpenID 签名校验失败', error.code || 'OPENID_BAD_SIGNATURE');
           return;
@@ -1447,6 +1710,70 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
+      if (pathname === '/api/admin/session') {
+        const session = readAdminSession(req);
+        sendJson(res, 200, { authenticated: Boolean(session), username: session?.username || null });
+        return;
+      }
+
+      if (pathname === '/api/admin/login') {
+        const ip = req.socket.remoteAddress || 'unknown';
+        if (adminAttemptBlocked(ip)) {
+          throw new HttpError(429, '登录尝试过多，请稍后再试', 'ADMIN_RATE_LIMITED');
+        }
+        const body = await readJsonBody(req);
+        const ok = verifyAdminCredentials(body.username, body.password);
+        noteAdminAttempt(ip, !ok);
+        if (!ok) {
+          console.warn(`[admin] 登录失败，来源 ${ip}`);
+          throw new HttpError(401, '用户名或密码错误', 'ADMIN_BAD_CREDENTIALS');
+        }
+        const token = createAdminSession(String(body.username));
+        res.setHeader('Set-Cookie', adminCookie(token));
+        console.log(`[admin] ${body.username} 已登录，来源 ${ip}`);
+        sendJson(res, 200, { ok: true, username: String(body.username) });
+        return;
+      }
+
+      if (pathname === '/api/admin/logout') {
+        const session = readAdminSession(req);
+        if (session) adminSessions.delete(session.token);
+        res.setHeader('Set-Cookie', adminCookie('', { clear: true }));
+        sendJson(res, 200, { ok: true });
+        return;
+      }
+
+      if (pathname === '/api/admin/stats') {
+        requireAdmin(req);
+        sendJson(res, 200, {
+          version: APP_VERSION,
+          uptime: Math.round(process.uptime()),
+          serverKey: Boolean(SERVER_KEY),
+          regions: REGIONS.length,
+          cachedEntries: cache.size,
+          pendingFetches: pendingFetches.size,
+          steamSessions: authSessions.size,
+          adminSessions: adminSessions.size,
+          titles: playerTitles.size,
+          node: process.version,
+          platform: process.platform,
+          startedAt: new Date(Date.now() - Math.round(process.uptime() * 1000)).toISOString(),
+        });
+        return;
+      }
+
+      if (pathname === '/api/admin/titles') {
+        requireAdmin(req);
+        if (method === 'PUT') {
+          const body = await readJsonBody(req);
+          const saved = saveTitles(body.titles || body.list || []);
+          sendJson(res, 200, { ok: true, titles: saved });
+          return;
+        }
+        sendJson(res, 200, { titles: [...playerTitles.values()].sort((a, b) => b.priority - a.priority) });
+        return;
+      }
+
       throw new HttpError(404, 'API 路由不存在', 'NOT_FOUND');
     }
 
@@ -1466,8 +1793,11 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
+  playerTitles = loadTitles();
+  ensureAdminCredential();
   console.log(`\n  Steam Atlas  http://${HOST}:${PORT}`);
-  console.log(`  Regions ${REGIONS.length} · Server API key ${SERVER_KEY ? 'configured' : 'not configured'} · v${APP_VERSION}\n`);
+  console.log(`  Regions ${REGIONS.length} · Server API key ${SERVER_KEY ? 'configured' : 'not configured'} · v${APP_VERSION}`);
+  console.log(`  Titles ${playerTitles.size} · Admin ${ADMIN_USERNAME} (change with ADMIN_USERNAME / ADMIN_PASSWORD)\n`);
 });
 
 function shutdown(signal) {

@@ -35,7 +35,7 @@ console.log('login status       :', loginRes.status);
 console.log('state issued       :', state.length === 32 ? 'yes' : 'NO');
 console.log('return_to captured :', returnTo.startsWith(`${BASE}/api/auth/callback`) ? 'yes' : 'NO');
 
-function signResponse(returnToValue, { tamper = false } = {}) {
+function signResponse(returnToValue, { tamper = false, encoder = 'standard' } = {}) {
   const fields = {
     ns: NS,
     mode: 'id_res',
@@ -49,12 +49,24 @@ function signResponse(returnToValue, { tamper = false } = {}) {
     signed: 'signed,op_endpoint,claimed_id,identity,return_to,response_nonce,assoc_handle,ns',
   };
   if (tamper) fields.claimed_id = 'https://steamcommunity.com/openid/id/76561198000000000';
+  const encoders = {
+    standard: (value) => encodeURIComponent(value),
+    slashSafe: (value) => encodeURIComponent(value).replace(/%2F/g, '/'),
+  };
+  const encode = encoders[encoder] || encoders.standard;
   const signedList = fields.signed.split(',');
-  const payload = signedList.map((f) => `${f}=${encodeURIComponent(fields[f])}`).join('&');
+  const payload = signedList.map((f) => `${f}=${encode(fields[f])}`).join('&');
   fields.sig = crypto.createHmac('sha1', apiKey).update(payload).digest('base64');
   const params = new URLSearchParams();
   for (const [name, value] of Object.entries(fields)) params.set(`openid.${name}`, value);
   return params.toString();
+}
+
+async function freshLogin() {
+  const res = await fetch(`${BASE}/api/auth/login`, { redirect: 'manual' });
+  const location = res.headers.get('location') || '';
+  const returnTo = new URL(location).searchParams.get('openid.return_to') || '';
+  return { state: new URL(returnTo).searchParams.get('state') || '', returnTo };
 }
 
 // 2. Tampered signature must be rejected.
@@ -63,15 +75,27 @@ const tamperTarget = new URL(tamperRes.headers.get('location') || '');
 console.log('tampered rejected  :', tamperTarget.searchParams.get('auth') === 'error' ? 'yes' : 'NO');
 
 // 3. A fresh state is needed because the state is single use.
-const loginRes2 = await fetch(`${BASE}/api/auth/login`, { redirect: 'manual' });
-const returnTo2 = new URL(loginRes2.headers.get('location')).searchParams.get('openid.return_to') || '';
+const second = await freshLogin();
 
 // 4. Correctly signed response must create a session.
-const okRes = await fetch(`${BASE}/api/auth/callback?${signResponse(returnTo2)}`, { redirect: 'manual' });
+const okRes = await fetch(`${BASE}/api/auth/callback?${signResponse(second.returnTo)}`, { redirect: 'manual' });
 const okTarget = new URL(okRes.headers.get('location') || '');
 const cookie = (okRes.headers.get('set-cookie') || '').split(';')[0];
 console.log('valid accepted     :', okTarget.searchParams.get('auth') === 'ok' ? 'yes' : `NO (${okTarget.searchParams.get('reason') || 'no reason'})`);
 console.log('cookie issued      :', cookie.startsWith('steam_atlas_sid=') ? 'yes' : 'NO');
+
+// 4b. The alternative slash-safe encoding must be accepted as well.
+const third = await freshLogin();
+const altRes = await fetch(`${BASE}/api/auth/callback?${signResponse(third.returnTo, { encoder: 'slashSafe' })}`, { redirect: 'manual' });
+const altTarget = new URL(altRes.headers.get('location') || '');
+console.log('alt encoding ok    :', altTarget.searchParams.get('auth') === 'ok' ? 'yes' : 'NO');
+
+// 4c. A mangled state (Steam appending its query with `?`) must still resolve.
+const fourth = await freshLogin();
+const mangledUrl = `${BASE}/api/auth/callback?state=${encodeURIComponent(`${fourth.state}?openid.mode=id_res`)}&${signResponse(fourth.returnTo)}`;
+const mangledRes = await fetch(mangledUrl, { redirect: 'manual' });
+const mangledTarget = new URL(mangledRes.headers.get('location') || '');
+console.log('mangled state ok   :', mangledTarget.searchParams.get('auth') === 'ok' ? 'yes' : 'NO');
 
 // 5. The session must resolve to the signed-in SteamID.
 if (cookie) {
