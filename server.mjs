@@ -1599,19 +1599,21 @@ function parseCookies(req) {  const header = req.headers.cookie || '';
   return jar;
 }
 
-function buildOpenIdUrl(returnTo) {
+function buildOpenIdUrl(returnTo, realm = '') {
   const claimedId = currentClaimedId();
   // Steam 的报错是 "Invalid claimed_id or identity"，有可能它只认其中之一，
   // 所以这两个字段可以单独开关，方便逐种组合试（.env 里改，不用重启）。
   const mode = String(loadEnvFile({ override: false }).STEAM_OPENID_IDENTITY_MODE
     || process.env.STEAM_OPENID_IDENTITY_MODE || 'both').trim().toLowerCase();
-  const params = new URLSearchParams({
-    'openid.ns': OPENID_NS,
-    'openid.mode': 'checkid_setup',
-    'openid.return_to': returnTo,
-  });
+  // 字段顺序和 openid.realm 都对齐 SteamDB / ProtonDB / SteamGridDB 的实际请求：
+  //   ns → mode → claimed_id → identity → realm → return_to
+  const params = new URLSearchParams();
+  params.set('openid.ns', OPENID_NS);
+  params.set('openid.mode', 'checkid_setup');
   if (mode !== 'identity') params.set('openid.claimed_id', claimedId);
   if (mode !== 'claimed') params.set('openid.identity', claimedId);
+  if (realm) params.set('openid.realm', realm);
+  params.set('openid.return_to', returnTo);
   return `${OPENID_ENDPOINT}?${params.toString()}`;
 }
 
@@ -2198,9 +2200,13 @@ const server = http.createServer(async (req, res) => {
         // Steam 官方示例里的 return_to 是干净地址（不带查询串），这里保持一致，
         // 防 CSRF 的 state 放在 Cookie 里随回跳带回来。
         const returnTo = new URL('/api/auth/callback', origin);
+        // openid.realm：SteamDB / ProtonDB / SteamGridDB 都会带，这里也带上本站地址。
+        const realmSetting = String(loadEnvFile({ override: false }).STEAM_OPENID_REALM
+          || process.env.STEAM_OPENID_REALM || 'on').trim().toLowerCase();
+        const realm = realmSetting === 'off' ? '' : origin;
         authStates.set(state, { returnTo: returnTo.toString(), origin, createdAt: Date.now() });
         res.writeHead(302, {
-          Location: buildOpenIdUrl(returnTo.toString()),
+          Location: buildOpenIdUrl(returnTo.toString(), realm),
           // The state travels in a cookie: it survives Steam rewriting the
           // return_to query string, and a SameSite=Lax cookie is still sent on
           // the top-level redirect back from Steam.
