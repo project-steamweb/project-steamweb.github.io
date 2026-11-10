@@ -1323,12 +1323,15 @@ function privacyRow(label, state, fallback = '—') {
 function profileBanState(profile) {
   const bans = profile.bans;
   if (bans) {
-    const any = bans.vacBanned || bans.communityBanned || bans.tradeBan;
+    // 游戏封禁（Game Ban）独立于 VAC 封禁，Steam 用单独字段统计
+    const gameBans = Number(bans.numberOfGameBans) || 0;
+    const any = bans.vacBanned || bans.communityBanned || bans.tradeBan || gameBans > 0;
     return {
       any,
       title: any ? '存在封禁或限制记录' : '未发现封禁记录',
       details: [
         bans.vacBanned ? `VAC 封禁 ${bans.numberOfVacBans || 1} 次` : 'VAC 正常',
+        gameBans > 0 ? `游戏封禁 ${gameBans} 次` : '游戏封禁正常',
         bans.communityBanned ? '社区封禁' : '社区正常',
         bans.tradeBan ? '交易封禁' : '交易正常',
       ].join(' · '),
@@ -1341,6 +1344,15 @@ function profileBanState(profile) {
     return { any: true, title: '交易状态受限', details: `交易封禁状态：${profile.tradeBanState}` };
   }
   return { any: false, title: '公开资料未显示封禁', details: 'VAC 与交易状态正常，配置 Key 可查看完整明细。' };
+}
+
+function profileValveNotice() {
+  return `
+    <div class="valve-notice">
+      <div class="valve-notice-head">${icon('alert')}<b>Valve 员工防诈骗提醒</b></div>
+      <p>Valve 员工永远不会使用任何聊天系统（包括 Steam 聊天和 Discord）就您的帐户与您沟通。您与 Steam 客服人员谈论有关自己帐户事宜的唯一方式就是通过 Steam 客服站点。无论在什么情况下，您都无需直接联系 Valve 或 Steam 员工来解决问题。</p>
+      <p class="valve-notice-link"><a href="https://help.steampowered.com/zh-cn/faqs/view/70E6-991B-233B-A37B" target="_blank" rel="noopener noreferrer">Steam欺诈常见问题</a></p>
+    </div>`;
 }
 
 function profilePage(profile) {
@@ -1370,6 +1382,7 @@ function profilePage(profile) {
       <div class="game-breadcrumb">
         <a href="#/">探索</a>${icon('chevron-right')}<a href="#/profile">玩家档案</a>${icon('chevron-right')}<span>${escapeHtml(profile.personaName)}</span>
       </div>
+      ${profile.isValveEmployee ? profileValveNotice() : ''}
       <section class="profile-hero">
         <div class="profile-banner"><img src="${avatarMedium}" alt="" data-fallback></div>
         <div class="profile-hero-inner">
@@ -1380,6 +1393,7 @@ function profilePage(profile) {
           <div class="profile-main">
             <div class="profile-name-row">
               <h1 class="profile-name">${escapeHtml(profile.personaName)}</h1>
+              ${profile.isValveEmployee ? '<span class="player-title valve" title="Valve 员工称号">Valve员工</span>' : ''}
               ${profile.title?.label ? `<span class="player-title ${escapeHtml(profile.title.color || 'crimson')}" title="${escapeHtml(profile.title.label)} 称号">${escapeHtml(profile.title.label)}</span>` : ''}
               <span class="badge ${profile.apiUsed ? 'accent' : 'blue'}">${sourceLabel}</span>
               <span class="badge ${visibility === '公开' ? '' : 'orange'}">${escapeHtml(visibility)}</span>
@@ -1471,7 +1485,19 @@ function profilePage(profile) {
                     </span>
                   </a>`).join('')}
               </div>` : '<div class="empty-inline privacy-inline">' + icon('lock') + (gamesHidden ? '该玩家的游戏详情为私密，无法读取最近游玩记录。' : '最近两周没有公开的游玩记录。') + '</div>'}
-          </section>` : `
+          </section>
+          ${profile.bans ? `
+          <section class="panel content-panel">
+            <div class="panel-title-row"><h2>封禁记录</h2><span>ACCOUNT STANDING</span></div>
+            <div class="metric-list">
+              <div class="metric-row"><span>VAC 封禁</span><b>${profile.bans.vacBanned ? `有记录（${profile.bans.numberOfVacBans || 1} 次）` : '无'}</b></div>
+              <div class="metric-row"><span>游戏封禁</span><b>${profile.bans.numberOfGameBans > 0 ? `有记录（${profile.bans.numberOfGameBans} 次）` : '无'}</b></div>
+              <div class="metric-row"><span>社区封禁</span><b>${profile.bans.communityBanned ? '有记录' : '无'}</b></div>
+              <div class="metric-row"><span>交易封禁</span><b>${profile.bans.tradeBan ? escapeHtml(profile.bans.economyBan || '受限') : '无'}</b></div>
+              <div class="metric-row"><span>距上次封禁</span><b>${profile.bans.daysSinceLastBan ? `${formatNumber(profile.bans.daysSinceLastBan)} 天` : '无记录'}</b></div>
+            </div>
+            <div class="profile-note" style="margin-top:16px">${icon('info')}<span>数据来自 Steam 官方 ISteamUser/GetPlayerBans 接口。游戏封禁（Game Ban）是独立于 VAC 的封禁类型，只有该接口能读到。</span></div>
+          </section>` : ''}` : `
           <section class="panel content-panel">
             <div class="panel-title-row"><h2>公开资料概览</h2><span>PUBLIC DATA</span></div>
             <div class="metric-list">
@@ -1479,8 +1505,11 @@ function profilePage(profile) {
               <div class="metric-row"><span>加入 Steam</span><b>${escapeHtml(memberSince || '—')}</b></div>
               <div class="metric-row"><span>公开群组数量</span><b>${profile.groupCount || 0}</b></div>
               <div class="metric-row"><span>两周公开时长</span><b>${recentHours}</b></div>
-              <div class="metric-row"><span>VAC 封禁</span><b>${profile.vacBanned ? '有记录' : '无公开记录'}</b></div>
-              <div class="metric-row"><span>交易封禁</span><b>${escapeHtml(profile.tradeBanState || '无公开记录')}</b></div>
+              <div class="metric-row"><span>VAC 封禁</span><b>${profile.bans ? (profile.bans.vacBanned ? `有记录（${profile.bans.numberOfVacBans || 1} 次）` : '无') : (profile.vacBanned ? '有记录' : '无公开记录')}</b></div>
+              <div class="metric-row"><span>游戏封禁</span><b>${profile.bans ? (profile.bans.numberOfGameBans > 0 ? `有记录（${profile.bans.numberOfGameBans} 次）` : '无') : '无公开记录'}</b></div>
+              <div class="metric-row"><span>社区封禁</span><b>${profile.bans ? (profile.bans.communityBanned ? '有记录' : '无') : '无公开记录'}</b></div>
+              <div class="metric-row"><span>交易封禁</span><b>${profile.bans ? (profile.bans.tradeBan ? escapeHtml(profile.bans.economyBan || '受限') : '无') : escapeHtml(profile.tradeBanState || '无公开记录')}</b></div>
+              ${profile.bans?.daysSinceLastBan ? `<div class="metric-row"><span>距上次封禁</span><b>${formatNumber(profile.bans.daysSinceLastBan)} 天</b></div>` : ''}
               <div class="metric-row"><span>受限账户</span><b>${profile.limitedAccount ? '是' : '否'}</b></div>
             </div>
             <div class="profile-note" style="margin-top:16px">${icon('info')}<span>Steam 公开档案 XML 不包含等级、封禁明细与完整游戏记录。配置 Web API Key 后，同一页面会自动升级为官方 API 数据。</span></div>

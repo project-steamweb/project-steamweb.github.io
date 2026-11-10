@@ -8,6 +8,8 @@ Steam 数据查询工具，包含：
 - 游戏资料：简介、截图、宣传片、成就、**可下载内容（DLC 列表）**、**DLC 可反查本体游戏**、发行版本、支持语言、配置要求、年龄分级与版权信息。
 - 全球 16 区价格：本地定价、汇率估算、折扣与非本地货币提示。
 - 玩家档案：SteamID64、个性域名、等级、徽章、游戏库、封禁与最近游玩。
+- **封禁记录**：VAC 封禁、**游戏封禁（Game Ban）**、社区封禁、交易封禁与距上次封禁天数，来自 Steam 官方 `ISteamUser/GetPlayerBans`。
+- **Valve 员工识别**：识别出 Valve 官方员工后，在名称后加上「Valve员工」称号，并在资料页顶部显示黄色防诈骗提醒。
 - 隐私逐项标注：公开、仅好友可见、私密分别显示，不把受限数据伪装成无数据。
 - 玩家称号：服务端可配置 Owner、Admin 等称号，显示在 Steam 名称后。
 - **Steam 登录**：通过 Steam 官方 OpenID 2.0 登录，登录后侧边栏显示头像与昵称，一键打开自己的档案。
@@ -220,6 +222,17 @@ Steam 对突发请求很敏感，连续密集请求会收到 403 甚至被临时
 - 整个解析结果缓存 10 分钟，重复访问几乎不产生新的请求；
 - appinfo 协议走的是 Steam 的 CM 服务器，不占用商店接口的额度。
 
+## Valve 员工识别与防诈骗提醒
+
+Valve 员工的 Steam 资料页上会挂一条官方横幅（`profile_header_valve_employee`）和一枚 `ValveEmployee` 徽章。这个标记**只出现在 HTML 页面里**，公开档案 XML 接口不返回，因此服务端会额外抓一次资料页 HTML 来判定。
+
+判定为 Valve 员工后：
+
+- Steam 名称后面加上 **Valve员工** 称号；
+- 资料页顶部显示黄色提示框，写明 Valve 员工不会通过 Steam 聊天或 Discord 联系用户，并给出 [Steam欺诈常见问题](https://help.steampowered.com/zh-cn/faqs/view/70E6-991B-233B-A37B) 链接。
+
+判定完全依据 Steam 自己给出的标记，不做主观推测；Steam 没有标记的账号（例如资料设为私密且未公开员工横幅的账号）不会被标成员工。
+
 ## 部署说明
 
 GitHub Pages 只能运行静态文件，不能运行 `server.mjs`。如需实时功能，请将 Node 服务部署到 Render、Railway、Fly.io 或自己的 VPS，再把前端 API 地址改为后端地址。
@@ -270,7 +283,7 @@ steam-web/
 | `/api/app/:id` | Steam Store `appdetails` |
 | `/api/prices/:id` | 对 16 个 `cc` 分别请求 `appdetails` |
 | `/api/dlc/:id` | 解析该游戏的 DLC 列表（名称、价格、发售日期） |
-| `/api/profile` | Steam Web API 或 `steamcommunity.com/.../?xml=1` |
+| `/api/profile` | Steam Web API 或 `steamcommunity.com/.../?xml=1`，另抓一次 HTML 判断 Valve 员工 |
 | `/api/auth/*` | Steam OpenID 2.0 + Steam Web API 校验 |
 | 汇率估算 | `open.er-api.com`，失败时回退 `frankfurter.app` |
 
@@ -280,6 +293,12 @@ steam-web/
 
 ```bash
 node test/openid.test.mjs
+```
+
+appinfo 模块的 VDF 解析与字段抽取单元测试（离线，不联网）：
+
+```bash
+node test/appinfo.test.mjs
 ```
 
 ## 许可证

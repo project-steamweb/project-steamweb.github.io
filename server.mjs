@@ -1264,11 +1264,17 @@ async function getProfileFromWebApi(steamId, key) {
     bans: ban ? {
       vacBanned: Boolean(ban.VACBanned),
       numberOfVacBans: Number(ban.NumberOfVACBans) || 0,
+      // 游戏封禁（Game Ban）不在 VAC 封禁里，Steam 单独用一个字段统计
+      gameBanned: Number(ban.NumberOfGameBans) > 0,
+      numberOfGameBans: Number(ban.NumberOfGameBans) || 0,
       daysSinceLastBan: Number(ban.DaysSinceLastBan) || 0,
       communityBanned: Boolean(ban.CommunityBanned),
       tradeBan: String(ban.EconomyBan || 'none') !== 'none',
       economyBan: ban.EconomyBan || 'none',
     } : null,
+    // 与公开档案字段保持一致，便于前端统一展示
+    vacBanned: ban ? Boolean(ban.VACBanned) : null,
+    tradeBanState: ban ? (String(ban.EconomyBan || 'none') !== 'none' ? String(ban.EconomyBan) : 'None') : null,
     source: 'webapi',
     apiUsed: true,
     memberSince: player.timecreated ? new Date(player.timecreated * 1000).toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' }) : null,
@@ -1298,6 +1304,28 @@ async function getPublicProfile(steamId, vanity) {
   return profile;
 }
 
+// Valve 员工的 Steam 资料页上会挂一条官方横幅，只有 HTML 页面里才有
+// （XML 接口不返回这个标记）。这是 Steam 自己给出的判定，最可靠。
+async function detectValveEmployee(steamId) {
+  const id = String(steamId || '').trim();
+  if (!/^\d{17}$/.test(id)) return false;
+  return cached(`valve:${id}`, 12 * 60 * 60 * 1000, async () => {
+    try {
+      const url = `${COMMUNITY_ORIGIN}/profiles/${id}/`;
+      const response = await fetch(url, {
+        headers: { 'User-Agent': BROWSER_UA, 'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8' },
+        signal: AbortSignal.timeout(12000),
+        redirect: 'follow',
+      });
+      if (!response.ok) return false;
+      const html = await response.text();
+      return html.includes('profile_header_valve_employee') || html.includes('ValveEmployee_80.png');
+    } catch {
+      return false;
+    }
+  });
+}
+
 async function getProfile(rawInput, key) {
   const parsed = parseProfileInput(rawInput);
   let officialError = null;
@@ -1306,7 +1334,9 @@ async function getProfile(rawInput, key) {
   if (key) {
     try {
       if (!steamId && parsed.vanity) steamId = await resolveVanity(parsed.vanity, key);
-      return await getProfileFromWebApi(steamId, key);
+      const profile = await getProfileFromWebApi(steamId, key);
+      profile.isValveEmployee = await detectValveEmployee(profile.steamId);
+      return profile;
     } catch (error) {
       officialError = error;
     }
@@ -1322,6 +1352,7 @@ async function getProfile(rawInput, key) {
           : `官方 API 暂时不可用（${officialError.message}），已切换到公开资料模式。`;
       publicProfile.apiError = officialError.code || 'WEB_API_ERROR';
     }
+    publicProfile.isValveEmployee = await detectValveEmployee(publicProfile.steamId);
     return publicProfile;
   } catch (publicError) {
     if (officialError) throw officialError;

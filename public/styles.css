@@ -1709,6 +1709,49 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
   border-color: rgba(232, 196, 106, 0.45);
   background: rgba(140, 104, 20, 0.26);
 }
+/* Valve 员工称号：跟随 Steam 官方横幅的配色 */
+.player-title.valve {
+  color: #ffd479;
+  border-color: rgba(255, 212, 121, 0.5);
+  background: linear-gradient(180deg, rgba(255, 196, 82, 0.24), rgba(140, 92, 12, 0.3));
+  box-shadow: 0 0 0 1px rgba(255, 212, 121, 0.1), 0 2px 14px rgba(255, 176, 32, 0.22);
+}
+
+/* Valve 员工防诈骗提醒（黄色提示框） */
+.valve-notice {
+  margin: 18px 0 0;
+  padding: 16px 18px;
+  border: 1px solid rgba(255, 196, 82, 0.42);
+  border-left: 3px solid #ffc452;
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(255, 196, 82, 0.13), rgba(120, 78, 10, 0.1));
+}
+.valve-notice-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #ffd479;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+}
+.valve-notice-head svg { width: 15px; height: 15px; flex: none; }
+.valve-notice p {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.85;
+}
+.valve-notice-link { margin-top: 10px !important; }
+.valve-notice-link a {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #ffd479;
+  font-weight: 600;
+  text-decoration: none;
+  border-bottom: 1px dashed rgba(255, 212, 121, 0.55);
+}
+.valve-notice-link a:hover { color: #ffe3a8; border-bottom-style: solid; }
 .profile-status-row { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-top: 12px; color: var(--muted); font-size: 10px; }
 .profile-status-row .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--muted-2); }
 .profile-status-row .dot.online { background: var(--accent); box-shadow: 0 0 8px rgba(110, 231, 200, 0.55); }
